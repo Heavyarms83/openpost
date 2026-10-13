@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	_ "github.com/mattn/go-sqlite3"
+	"github.com/uptrace/bun/dialect/sqlitedialect"
 	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 	"time"
@@ -40,6 +43,20 @@ func TestConfirmFirstWorkspaceConcurrentKeysPostgres(t *testing.T) {
 	sqlDB.SetMaxOpenConns(24)
 	db := bun.NewDB(sqlDB, pgdialect.New())
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	assertConcurrentFirstWorkspaceConfirmation(t, db)
+}
+
+func TestConfirmFirstWorkspaceConcurrentKeysSQLite(t *testing.T) {
+	sqlDB, err := sql.Open("sqlite3", "file:"+filepath.Join(t.TempDir(), "billing.db")+"?_busy_timeout=10000&_journal_mode=WAL")
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(24)
+	db := bun.NewDB(sqlDB, sqlitedialect.New())
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	assertConcurrentFirstWorkspaceConfirmation(t, db)
+}
+
+func assertConcurrentFirstWorkspaceConfirmation(t *testing.T, db *bun.DB) {
+	t.Helper()
 	for _, model := range []any{
 		(*models.Organization)(nil),
 		(*models.OrganizationMember)(nil),
@@ -51,7 +68,7 @@ func TestConfirmFirstWorkspaceConcurrentKeysPostgres(t *testing.T) {
 		_, err := db.NewCreateTable().Model(model).Exec(t.Context())
 		require.NoError(t, err)
 	}
-	_, err = db.ExecContext(t.Context(), `CREATE TABLE voice_profiles (
+	_, err := db.ExecContext(t.Context(), `CREATE TABLE voice_profiles (
 		id TEXT PRIMARY KEY,
 		workspace_id TEXT NOT NULL,
 		name TEXT NOT NULL,

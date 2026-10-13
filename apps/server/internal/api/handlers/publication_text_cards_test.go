@@ -366,3 +366,25 @@ func TestJoinedTextCardEchoedMediaKeepsInheritance(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, joined.SourceOverrides[0].MediaInherited)
 }
+
+func TestTextCardPreviewRateLimitProtectsAllPreviewCallers(t *testing.T) {
+	srv := newMCPTestServer(t)
+	_, err := srv.db.NewUpdate().Model((*models.SocialAccount)(nil)).Set("platform = 'pixelfed'").Where("id = 'account-1'").Exec(t.Context())
+	require.NoError(t, err)
+	_, err = srv.db.NewUpdate().Model((*models.WorkspaceMember)(nil)).Set("user_id = ?", "preview-rate-user").Where("workspace_id = ?", "ws-1").Exec(t.Context())
+	require.NoError(t, err)
+	h := srv.handler.publicationHandler()
+	input := &PreviewTextCardInput{}
+	input.Body.SocialAccountID = "account-1"
+	input.Body.Text = "Preview"
+	input.Body.Settings = map[string]any{"text_card_shadow": false}
+	for range 30 {
+		_, err := h.previewTextCardForUser(t.Context(), "preview-rate-user", input)
+		require.NoError(t, err)
+	}
+	_, err = h.previewTextCardForUser(t.Context(), "preview-rate-user", input)
+	require.Error(t, err)
+	var status interface{ GetStatus() int }
+	require.ErrorAs(t, err, &status)
+	require.Equal(t, http.StatusTooManyRequests, status.GetStatus())
+}

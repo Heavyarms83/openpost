@@ -6,6 +6,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/openpost/backend/internal/services/medialifecycle"
 	"hash/crc32"
 	"image"
 	"image/color"
@@ -20,6 +21,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/openpost/backend/internal/models"
 	"github.com/openpost/backend/internal/services/entitlements"
@@ -51,6 +53,10 @@ func TestMediaUploadRejectsActiveContent(t *testing.T) {
 					storage.objects[id+".bin"] = []byte(payload.content)
 					response := srv.postJSON(t, "/api/v1/media/upload-session/"+id+"/complete", map[string]any{"workspace_id": "ws-1"})
 					require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+					require.Empty(t, storage.objects, "rejected direct-upload bytes must be removed")
+					exists, err := srv.db.NewSelect().Model((*models.MediaAttachment)(nil)).Where("id = ?", id).Exists(t.Context())
+					require.NoError(t, err)
+					require.False(t, exists, "rejected uploads must not retain billable rows")
 					return
 				}
 				var body bytes.Buffer
@@ -344,4 +350,30 @@ func TestMediaUploadSessionDoesNotReuseCorruptReadyImage(t *testing.T) {
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &result))
 	require.False(t, result.Deduped)
 	require.NotEqual(t, "legacy", result.MediaID)
+}
+
+func TestMediaCleanupPurgesAbandonedUploadSessions(t *testing.T) {
+	srv := newMCPTestServer(t)
+	for _, model := range []any{(*models.VideoProjectRevision)(nil), (*models.VideoProjectMutation)(nil), (*models.VideoProjectCheckpoint)(nil), (*models.VideoProjectConflict)(nil)} {
+		_, err := srv.db.NewCreateTable().Model(model).IfNotExists().Exec(t.Context())
+		require.NoError(t, err)
+	}
+	now := time.Now().UTC()
+	rows := []models.MediaAttachment{
+		{ID: "stale", WorkspaceID: "ws-1", FilePath: "stale.mp4", FileHash: "pending:stale", ProcessingStatus: "processing", RetentionClass: "library", CreatedAt: now.Add(-25 * time.Hour)},
+		{ID: "failed", WorkspaceID: "ws-1", FilePath: "failed.mp4", FileHash: "pending:failed", ProcessingStatus: "failed", RetentionClass: "library", CreatedAt: now.Add(-25 * time.Hour)},
+		{ID: "fresh", WorkspaceID: "ws-1", FilePath: "fresh.mp4", FileHash: "pending:fresh", ProcessingStatus: "processing", RetentionClass: "library", CreatedAt: now.Add(-time.Hour)},
+		{ID: "ready", WorkspaceID: "ws-1", FilePath: "ready.mp4", FileHash: "complete", ProcessingStatus: "ready", RetentionClass: "library", CreatedAt: now.Add(-25 * time.Hour)},
+	}
+	_, err := srv.db.NewInsert().Model(&rows).Exec(t.Context())
+	require.NoError(t, err)
+	require.NoError(t, medialifecycle.NewService(srv.db, nil).Sweep(t.Context(), "ws-1", now))
+	var kept []models.MediaAttachment
+	require.NoError(t, srv.db.NewSelect().Model(&kept).Order("id ASC").Scan(t.Context()))
+	require.Len(t, kept, 2)
+	require.Equal(t, "fresh", kept[0].ID)
+	require.Equal(t, "ready", kept[1].ID)
+	var jobs []models.Job
+	require.NoError(t, srv.db.NewSelect().Model(&jobs).Where("type = ?", "storage_delete").Scan(t.Context()))
+	require.NotEmpty(t, jobs, "storage deletion must be durable")
 }

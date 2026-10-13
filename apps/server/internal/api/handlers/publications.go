@@ -1134,11 +1134,25 @@ func scheduledPublicationQuotaError(decision entitlements.Decision) error {
 	return huma.NewError(http.StatusPaymentRequired, reason)
 }
 
-func (h *PublicationHandler) recordScheduledPublicationUsage(ctx context.Context, workspaceID string, scheduledAt time.Time) error {
-	if h.usage == nil {
+func (h *PublicationHandler) recordScheduledPublicationUsageWithDB(ctx context.Context, db bun.IDB, workspaceID string, scheduledAt time.Time) error {
+	if h.usage == nil || h.entitlement == nil {
 		return publicationservice.NewError(publicationservice.ErrorTemporaryUnavailable, errors.New("scheduled publication usage is unavailable"))
 	}
-	if _, err := h.usage.IncrementMonthly(ctx, workspaceID, entitlements.LimitScheduledPostsMonthly, 1, scheduledAt); err != nil {
+	decision, err := entitlements.CheckWithDB(ctx, h.entitlement, db, entitlements.Request{WorkspaceID: workspaceID, Limit: entitlements.LimitScheduledPostsMonthly, Amount: 1})
+	if err != nil {
+		return publicationservice.NewError(publicationservice.ErrorTemporaryUnavailable, errors.New("failed to check scheduled publication limit"))
+	}
+	if !decision.Allowed {
+		return scheduledPublicationQuotaError(decision)
+	}
+	_, err = usage.IncrementMonthlyLimitedInTransaction(ctx, db, workspaceID, entitlements.LimitScheduledPostsMonthly, 1, scheduledAt, decision)
+	if errors.Is(err, usage.ErrQuotaExceeded) {
+		return scheduledPublicationQuotaError(decision)
+	}
+	if err != nil {
+		if decision.Unlimited && strings.Contains(err.Error(), "no such table: usage_counters") {
+			return nil
+		}
 		return publicationservice.NewError(publicationservice.ErrorTemporaryUnavailable, errors.New("failed to record scheduled publication usage"))
 	}
 	return nil
@@ -3656,6 +3670,9 @@ func (h *PublicationHandler) queuePublicationWithRunAtTx(
 	}
 	result := publicationEnqueueResult{}
 	if policyMode == publicationauth.PolicyScheduled {
+		if err := h.recordScheduledPublicationUsageWithDB(ctx, tx, publication.WorkspaceID, publication.ScheduledAt); err != nil {
+			return publicationEnqueueResult{}, err
+		}
 		result.JobID, err = h.replacePublicationJobWithIntentTx(ctx, tx, publicationID, runAt, intent)
 	} else {
 		result.JobID, err = h.replaceImmediatePublicationJobWithIntentTx(ctx, tx, publicationID, runAt, intent)

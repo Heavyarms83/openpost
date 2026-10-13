@@ -34,6 +34,34 @@ type woff2Table struct {
 	transformed       bool
 }
 
+// ValidateFontContent checks the complete uploaded font container without theme
+// metadata restrictions. Brand fonts can include variable fonts.
+func ValidateFontContent(content []byte, format string) error {
+	if len(content) < 12 || len(content) > maxDecodedThemeFontBytes {
+		return fmt.Errorf("font size is invalid")
+	}
+	var tables map[string][]byte
+	var err error
+	if format == "woff2" {
+		tables, err = decodeWOFF2Tables(content)
+	} else {
+		tables, err = decodeSFNTTables(content)
+	}
+	if err != nil {
+		return err
+	}
+	if err := validateSFNTStructure(tables, format); err != nil {
+		return err
+	}
+	if _, ok := tables["cmap"]; !ok {
+		return fmt.Errorf("font is missing character mappings")
+	}
+	if _, ok := tables["name"]; !ok {
+		return fmt.Errorf("font is missing names")
+	}
+	return nil
+}
+
 func validateWOFF2(content []byte, expectedFamily string, expectedWeight int, expectedStyle string) error {
 	tables, err := decodeWOFF2Tables(content)
 	if err != nil {

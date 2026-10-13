@@ -197,6 +197,18 @@ func TestPublicationAuthorizationPreflightRejectsChangedContentBeforeProviderCal
 	require.Equal(t, models.PublicationStatusReady, publication.Status, "preflight must run before publishing state changes")
 }
 
+func TestPublicationAuthorizationPreflightRejectsAccountMovedToAnotherWorkspace(t *testing.T) {
+	adapter := &fakePublisherAdapter{externalID: "must-not-publish"}
+	srv := newPublisherLifecycleTestServer(t, adapter)
+	ctx, payload := srv.authorizedPublicationJob(t)
+	_, err := srv.db.NewUpdate().Model((*models.SocialAccount)(nil)).
+		Set("workspace_id = ?", "foreign-workspace").Where("id = ?", "account-1").Exec(t.Context())
+	require.NoError(t, err)
+	err = srv.service.HandlePublishPublicationJob(ctx, payload)
+	require.Error(t, err)
+	require.Zero(t, adapter.publishCalls)
+}
+
 type publisherLifecycleTestServer struct {
 	db      *bun.DB
 	service *Service

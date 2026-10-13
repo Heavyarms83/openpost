@@ -243,3 +243,24 @@ func TestOldSubscriptionEventsCannotReplaceNewCheckout(t *testing.T) {
 		require.Equal(t, "active", stored.Status)
 	}
 }
+
+func TestSubscriptionReconciliationRejectsCheckoutPriceSubstitution(t *testing.T) {
+	for _, priceID := range []string{"pri_founder_month", "pri_agency_year", "pri_unknown", ""} {
+		t.Run(priceID, func(t *testing.T) {
+			db := newBillingTestDB(t)
+			now := time.Now().UTC()
+			_, err := db.NewInsert().Model(&models.BillingCheckoutAttempt{CheckoutAttemptID: "chkat_recovery", OrganizationID: "org-1", WorkspaceID: "ws-1", UserID: "user-1", Provider: ProviderPaddle, ProviderPriceID: "pri_agency_month", PlanID: "agency", BillingPeriod: "monthly", Status: "created", CreatedAt: now, UpdatedAt: now}).Exec(t.Context())
+			require.NoError(t, err)
+			service := NewService(db, "", PaddleConfig{Plans: testCatalog()})
+			api := &fakePaddleAPI{customer: &paddle.Customer{ID: "ctm_1", Email: "owner@example.com"}}
+			service.api = api
+			subscription := recoverySubscription(paddle.SubscriptionStatusActive, now)
+			subscription.Items[0].Price.ID = priceID
+			require.Error(t, service.reconcileSubscription(t.Context(), subscription, nil))
+			count, err := db.NewSelect().Model((*models.BillingSubscription)(nil)).Count(t.Context())
+			require.NoError(t, err)
+			require.Zero(t, count)
+			require.Zero(t, api.customerGets)
+		})
+	}
+}

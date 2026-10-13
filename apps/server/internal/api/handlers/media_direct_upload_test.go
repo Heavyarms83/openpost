@@ -586,12 +586,22 @@ func TestValidateMediaAssetContentAcceptsSnifferContainerNames(t *testing.T) {
 func TestValidateBrandFontContent(t *testing.T) {
 	t.Parallel()
 
-	validWOFF2 := append([]byte{'w', 'O', 'F', '2'}, make([]byte, 24)...)
-	validTTF := append([]byte{0x00, 0x01, 0x00, 0x00}, make([]byte, 24)...)
-	validOTF := append([]byte{'O', 'T', 'T', 'O'}, make([]byte, 24)...)
+	validWOFF2, err := os.ReadFile("../../services/themes/testdata/roboto-latin-400-normal.woff2")
+	require.NoError(t, err)
+	validTTF, err := os.ReadFile("../../memes/catalog/fonts/NotoSans-Bold.ttf")
+	require.NoError(t, err)
 	require.NoError(t, validateMediaAssetContent("brand_font", "brand.woff2", "font/woff2", validWOFF2))
 	require.NoError(t, validateMediaAssetContent("brand_font", "brand.ttf", "font/ttf", validTTF))
-	require.NoError(t, validateMediaAssetContent("brand_font", "brand.otf", "font/otf", validOTF))
+	for _, forged := range []struct {
+		name, mime string
+		bytes      []byte
+	}{
+		{"brand.woff2", "font/woff2", append([]byte("wOF2"), make([]byte, 48)...)},
+		{"brand.ttf", "font/ttf", append([]byte{0, 1, 0, 0}, make([]byte, 48)...)},
+		{"brand.otf", "font/otf", append([]byte("OTTO"), make([]byte, 48)...)},
+	} {
+		require.Error(t, validateMediaAssetContent("brand_font", forged.name, forged.mime, forged.bytes), "magic bytes alone do not make a usable font")
+	}
 	require.ErrorContains(
 		t,
 		validateMediaAssetContent("brand_font", "brand.woff2", "font/woff2", []byte("not-a-font")),
@@ -1092,4 +1102,31 @@ func TestValidateMediaAssetContentKeepsSVGTextInsideBinaryAudio(t *testing.T) {
 	// A RIFF sample or metadata chunk can contain these bytes without being an SVG document.
 	wav := append([]byte("RIFF\x24\x00\x00\x00WAVEfmt \x10\x00\x00\x00"), []byte("<svg")...)
 	require.NoError(t, validateMediaAssetContent("project_asset", "voice.wav", "audio/wave", wav))
+}
+
+func TestCompleteMediaUploadSessionConcurrentRetryMetersOnce(t *testing.T) {
+	storage := newFakeDirectUploadStorage()
+	srv := newMediaDirectUploadTestServer(t, storage, entitlements.NewSelfHostedService())
+	mediaID := srv.createUploadSession(t, "copy.txt", "text/plain", 12)
+	storage.objects[mediaID+".txt"] = []byte("hello direct")
+	quota := &synchronizedMediaQuota{Service: entitlements.NewSelfHostedService(), arrived: make(chan struct{}, 2), release: make(chan struct{})}
+	quota.remaining.Store(2)
+	srv.handler.SetEntitlement(quota)
+	srv.db.SetMaxOpenConns(1)
+	responses := make(chan *httptest.ResponseRecorder, 2)
+	for range 2 {
+		go func() {
+			responses <- srv.postJSON(t, "/api/v1/media/upload-session/"+mediaID+"/complete", map[string]any{"workspace_id": "ws-1"})
+		}()
+	}
+	<-quota.arrived
+	<-quota.arrived
+	close(quota.release)
+	for range 2 {
+		resp := <-responses
+		require.Equal(t, http.StatusOK, resp.Code, resp.Body.String())
+	}
+	current, err := srv.usage.CurrentMonthly(t.Context(), "ws-1", entitlements.LimitMediaBytesUploadedMonthly, time.Now())
+	require.NoError(t, err)
+	require.Equal(t, int64(12), current)
 }
