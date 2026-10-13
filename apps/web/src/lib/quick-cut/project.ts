@@ -15,7 +15,7 @@ import type {
 	QuickCutVideoStream
 } from './types';
 import type { QuickCutSource } from './types';
-import { createHash } from './fingerprint';
+import { matchFingerprint } from './fingerprint';
 
 const MAX_SOURCES = 64;
 const MAX_SEGMENTS = 10000;
@@ -557,15 +557,15 @@ export async function restoreSourceHandles(
 				const sizeOk = file.size === m.size;
 				const nameOk = file.name === m.name;
 				const lastModifiedOk = m.lastModified === undefined || file.lastModified === m.lastModified;
-				let fingerprintOk = true;
-				if (m.contentFingerprint) {
-					const fp = await createHash(file);
-					fingerprintOk = fp === m.contentFingerprint;
-				}
+				const fingerprint = m.contentFingerprint
+					? await matchFingerprint(file, m.contentFingerprint)
+					: undefined;
+				const fingerprintOk = fingerprint !== null;
 				if (!sizeOk || !nameOk || !lastModifiedOk || !fingerprintOk) {
 					map.set(m.id, null);
 					continue;
 				}
+				if (fingerprint) m.contentFingerprint = fingerprint;
 				map.set(m.id, handle);
 			} catch {
 				map.set(m.id, null);

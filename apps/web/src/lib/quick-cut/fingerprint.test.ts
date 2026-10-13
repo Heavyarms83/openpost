@@ -16,6 +16,6 @@ describe('quick-cut source fingerprint', () => {
 		const originalHash = await createHash(original);
 		expect(await createHash(changedMiddle)).not.toBe(originalHash);
 		expect(await createHash(changedTail)).not.toBe(originalHash);
-		expect(originalHash).toMatch(/^[0-9a-f]{64}$/u);
+		expect(originalHash).toMatch(/^sha256:[0-9a-f]{64}$/u);
 	});
 });
