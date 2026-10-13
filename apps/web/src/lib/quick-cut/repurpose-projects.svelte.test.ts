@@ -109,6 +109,14 @@ test('local clip projects reopen with independent ranges and the full original s
 	expect(second?.project.segments).toMatchObject([{ start: 9, end: 12, cutMode: 'exact' }]);
 	expect(await first?.sources[0]?.file?.text()).toBe('full original media contents');
 	expect(await second?.sources[0]?.file?.text()).toBe('full original media contents');
+	expect(first?.sources[0]).toMatchObject({
+		name: 'original.mp4',
+		size: 28,
+		contentFingerprint: 'sha256:45a615d870ed2553951971d5a3fa435a5087cca7aacbd6697c65798e2b6dadd6',
+		transcript: input.transcript
+	});
+	expect(second?.sources[0]?.contentFingerprint).toBe(first?.sources[0]?.contentFingerprint);
+	expect(input.contentFingerprint).toBeUndefined();
 	expect(input.id).toBe('original-source');
 });
 
