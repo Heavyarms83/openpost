@@ -1174,3 +1174,27 @@ func TestDirectUploadCompletionRetriesAfterStorageInspectionFailure(t *testing.T
 		})
 	}
 }
+
+func TestDirectUploadAdmissionHidesDatabaseFailures(t *testing.T) {
+	for _, operation := range []string{"reserve", "complete"} {
+		t.Run(operation, func(t *testing.T) {
+			storage := newFakeDirectUploadStorage()
+			srv := newMediaDirectUploadTestServer(t, storage, entitlements.NewSelfHostedService())
+			mediaID := ""
+			if operation == "complete" {
+				mediaID = srv.createUploadSession(t, "copy.txt", "text/plain", 12)
+				storage.objects[mediaID+".txt"] = []byte("hello direct")
+			}
+			_, err := srv.db.ExecContext(t.Context(), "CREATE TRIGGER fail_media_admission BEFORE UPDATE OF name ON workspaces BEGIN SELECT RAISE(ABORT, 'private media admission database detail'); END")
+			require.NoError(t, err)
+			var response *httptest.ResponseRecorder
+			if operation == "reserve" {
+				response = srv.postJSON(t, "/api/v1/media/upload-session", map[string]any{"workspace_id": "ws-1", "filename": "copy.txt", "mime_type": "text/plain", "size": 12})
+			} else {
+				response = srv.postJSON(t, "/api/v1/media/upload-session/"+mediaID+"/complete", map[string]any{"workspace_id": "ws-1"})
+			}
+			require.Equal(t, http.StatusInternalServerError, response.Code, response.Body.String())
+			require.NotContains(t, response.Body.String(), "private media admission database detail")
+		})
+	}
+}

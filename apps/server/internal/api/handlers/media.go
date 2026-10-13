@@ -1479,7 +1479,7 @@ func (h *MediaHandler) reserveNewMediaUploadSession(ctx context.Context, actor w
 	}
 	persist := func(persistCtx context.Context, db bun.IDB) error {
 		if err := h.serializeMediaAdmission(persistCtx, db, *media, "", false); err != nil {
-			return huma.Error400BadRequest(err.Error())
+			return mediaAdmissionHTTPError(err, "failed to reserve media upload")
 		}
 		if _, err := db.NewInsert().Model(media).Exec(persistCtx); err != nil {
 			return huma.Error500InternalServerError("failed to reserve media upload")
@@ -1510,7 +1510,11 @@ func (h *MediaHandler) reserveNewMediaUploadSession(ctx context.Context, actor w
 	if err := h.db.RunInTx(ctx, &sql.TxOptions{}, func(txCtx context.Context, tx bun.Tx) error {
 		return persist(txCtx, tx)
 	}); err != nil {
-		return nil, err
+		var statusError huma.StatusError
+		if errors.As(err, &statusError) {
+			return nil, err
+		}
+		return nil, mediaAdmissionHTTPError(err, "failed to reserve media upload")
 	}
 	return &CreateMediaUploadSessionOutput{Body: response}, nil
 }
@@ -2011,7 +2015,7 @@ func (h *MediaHandler) finalizeDirectMediaUploadRecord(ctx context.Context, medi
 		return h.serializeMediaAdmission(ctx, tx, media, media.ID, true)
 	})
 	if err != nil {
-		return media, huma.Error400BadRequest(err.Error())
+		return media, mediaAdmissionHTTPError(err, "failed to finalize media upload")
 	}
 
 	if mediaanalysis.IsTimeBased(mimeType) && h.video != nil {
@@ -3866,6 +3870,13 @@ func (h *MediaHandler) processUploadBytes(ctx context.Context, input mediaUpload
 	}
 
 	return mediaUploadMap(*media, false), nil
+}
+
+func mediaAdmissionHTTPError(err error, detail string) error {
+	if errors.Is(err, usage.ErrQuotaExceeded) {
+		return huma.Error400BadRequest("media quota exceeded")
+	}
+	return huma.Error500InternalServerError(detail)
 }
 
 // serializeMediaAdmission locks the workspace in both supported databases before
