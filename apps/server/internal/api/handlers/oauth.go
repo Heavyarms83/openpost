@@ -99,7 +99,7 @@ type OAuthHandler struct {
 	tokenSource                  AccessTokenSource
 	accountAvatars               accountAvatarCache
 	blueskyPDS                   func(context.Context, string) (string, string, error)
-	blueskyAdapter               func(string) *platform.BlueskyAdapter
+	blueskyAdapter               func(string) blueskyLoginProvider
 	// frontendURL is the absolute base URL the SPA is served from
 	// (e.g. "https://openpost.example.com"). OAuth callback redirects go
 	// here so they work behind reverse proxies and subpath mounts.
@@ -145,16 +145,22 @@ func NewOAuthHandler(
 		oauthStates:                  oauthstate.NewStore(db),
 		frontendURL:                  strings.TrimRight(frontendURL, "/"),
 		blueskyPDS:                   platform.ResolveBlueskyPDS,
-		blueskyAdapter:               platform.NewResolvedBlueskyAdapter,
+		blueskyAdapter:               func(pds string) blueskyLoginProvider { return platform.NewResolvedBlueskyAdapter(pds) },
 	}
+}
+
+type blueskyLoginProvider interface {
+	platform.Adapter
+	PDSURL() string
+	CreateSession(context.Context, string, string) (string, string, string, string, int, error)
 }
 
 // blueskyLoginAdapter targets the PDS named by the handle's DID document. It
 // falls back to the configured PDS only when resolution succeeded and named
 // none; a resolution failure fails the login rather than signing in against a
 // server that may not hold the repository.
-func (h *OAuthHandler) blueskyLoginAdapter(ctx context.Context, adapter platform.Adapter, handle string) (*platform.BlueskyAdapter, string, error) {
-	configured, ok := adapter.(*platform.BlueskyAdapter)
+func (h *OAuthHandler) blueskyLoginAdapter(ctx context.Context, adapter platform.Adapter, handle string) (blueskyLoginProvider, string, error) {
+	configured, ok := adapter.(blueskyLoginProvider)
 	if !ok {
 		return nil, "", huma.Error500InternalServerError("bluesky adapter type mismatch")
 	}
@@ -172,7 +178,7 @@ func (h *OAuthHandler) blueskyLoginAdapter(ctx context.Context, adapter platform
 	}
 	adapterFactory := h.blueskyAdapter
 	if adapterFactory == nil {
-		adapterFactory = platform.NewResolvedBlueskyAdapter
+		adapterFactory = func(pds string) blueskyLoginProvider { return platform.NewResolvedBlueskyAdapter(pds) }
 	}
 	return adapterFactory(pdsURL), resolvedDID, nil
 }
@@ -180,7 +186,7 @@ func (h *OAuthHandler) blueskyLoginAdapter(ctx context.Context, adapter platform
 // setBlueskyPDSResolver keeps DID resolution off the network in tests.
 func (h *OAuthHandler) setBlueskyPDSResolver(resolve func(context.Context, string) (string, string, error)) {
 	h.blueskyPDS = resolve
-	h.blueskyAdapter = platform.NewBlueskyAdapter
+	h.blueskyAdapter = func(pds string) blueskyLoginProvider { return platform.NewBlueskyAdapter(pds) }
 }
 
 // provider guards reads that can race dynamic PDS registration.

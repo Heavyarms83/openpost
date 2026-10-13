@@ -9,6 +9,7 @@ import (
 	"github.com/openpost/backend/internal/api/middleware"
 	"github.com/openpost/backend/internal/models"
 	"github.com/openpost/backend/internal/services/auth"
+	"github.com/openpost/backend/internal/services/mfa"
 	"github.com/stretchr/testify/require"
 	"net/http"
 	"testing"
@@ -52,4 +53,35 @@ func TestBrowserAuthResponseHasOnlyCookie(t *testing.T) {
 	native, err := handler.issueAuthResponse(t.Context(), user)
 	require.NoError(t, err)
 	require.NotEmpty(t, native.Body.Token)
+}
+
+func TestPasskeyBeginRetryKeepsSameCeremony(t *testing.T) {
+	db := createHandlerTestDB(t, (*models.User)(nil), (*models.AuthChallenge)(nil), (*models.UserPasskey)(nil))
+	user := &models.User{ID: "u", Email: "u@example.com", PasswordHash: "unused", CreatedAt: time.Now().UTC()}
+	_, err := db.NewInsert().Model(user).Exec(t.Context())
+	require.NoError(t, err)
+	_, err = db.NewInsert().Model(&models.UserPasskey{ID: "key", UserID: "u", CredentialID: []byte{1, 2, 3}, CredentialJSON: `{"id":"AQID","publicKey":"AQID"}`, CreatedAt: time.Now().UTC()}).Exec(t.Context())
+	require.NoError(t, err)
+	challenge := &models.AuthChallenge{ID: "mfa", UserID: "u", Type: authChallengeLoginMFA, Payload: `{"methods":["passkey"]}`, ExpiresAt: time.Now().Add(time.Minute), CreatedAt: time.Now()}
+	_, err = db.NewInsert().Model(challenge).Exec(t.Context())
+	require.NoError(t, err)
+	service, err := mfa.NewService("OpenPost", mfa.RelyingPartyConfig{Name: "OpenPost", ID: "localhost", Origins: []string{"http://localhost"}})
+	require.NoError(t, err)
+	e := echo.New()
+	api := humaecho.NewWithGroup(e, e.Group("/api/v1"), huma.DefaultConfig("test", "1"))
+	handler := NewAuthHandler(db, nil, nil, nil, service, false)
+	handler.BeginPasskeyLogin(api)
+	var first json.RawMessage
+	for i := 0; i < 2; i++ {
+		response := jsonRequest(t, e, http.MethodPost, "/api/v1/auth/login/passkey/options", map[string]any{"mfa_token": "mfa"}, "")
+		require.Equal(t, 200, response.Code, response.Body.String())
+		if i == 0 {
+			first = response.Body.Bytes()
+		} else {
+			require.JSONEq(t, string(first), response.Body.String())
+		}
+	}
+	count, err := db.NewSelect().Model((*models.AuthChallenge)(nil)).Where("type = ?", authChallengePasskeyLogin).Count(t.Context())
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
 }

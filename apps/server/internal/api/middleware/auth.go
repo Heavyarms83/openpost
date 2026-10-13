@@ -319,7 +319,7 @@ func AuthMiddleware(api huma.API, authenticator Authenticator) func(ctx huma.Con
 			_ = huma.WriteErr(api, ctx, http.StatusUnauthorized, "invalid or expired token")
 			return
 		}
-		if sessionOriginRejected(principal, ctx.Header("Origin"), ctx.Host(), requestScheme(ctx)) {
+		if SessionOriginRejected(principal, ctx.Header("Origin"), ctx.Host(), requestScheme(ctx)) {
 			_ = huma.WriteErr(api, ctx, http.StatusForbidden, "cross-site session request rejected")
 			return
 		}
@@ -359,7 +359,7 @@ func OptionalAuthMiddleware(api huma.API, authenticator Authenticator) func(ctx 
 			next(ctx)
 			return
 		}
-		if sessionOriginRejected(principal, ctx.Header("Origin"), ctx.Host(), requestScheme(ctx)) {
+		if SessionOriginRejected(principal, ctx.Header("Origin"), ctx.Host(), requestScheme(ctx)) {
 			next(ctx)
 			return
 		}
@@ -475,7 +475,11 @@ func GetClientIP(ctx context.Context) string {
 
 func RequestMetadataMiddleware() func(ctx huma.Context, next func(huma.Context)) {
 	return func(ctx huma.Context, next func(huma.Context)) {
-		ctx = huma.WithValue(ctx, OriginKey, strings.TrimSpace(ctx.Header("Origin")))
+		browserOrigin := strings.TrimSpace(ctx.Header("Origin"))
+		if browserOrigin == "" && ctx.Header("Sec-Fetch-Site") != "" {
+			browserOrigin = "browser"
+		}
+		ctx = huma.WithValue(ctx, OriginKey, browserOrigin)
 		ctx = huma.WithValue(ctx, ClientIPKey, requestClientIP(ctx))
 		ctx = huma.WithValue(ctx, UserAgentKey, strings.TrimSpace(ctx.Header("User-Agent")))
 		ctx = huma.WithValue(ctx, SecureKey, ctx.TLS() != nil || strings.EqualFold(strings.TrimSpace(ctx.Header("X-Forwarded-Proto")), "https"))
@@ -553,7 +557,7 @@ func BearerMiddleware(authenticator Authenticator, operationID ...string) echo.M
 				}
 				return c.JSON(http.StatusUnauthorized, map[string]string{string(errorKey): "invalid or expired token"})
 			}
-			if sessionOriginRejected(principal, c.Request().Header.Get("Origin"), c.Request().Host, c.Scheme()) {
+			if SessionOriginRejected(principal, c.Request().Header.Get("Origin"), c.Request().Host, c.Scheme()) {
 				return c.JSON(http.StatusForbidden, map[string]string{string(errorKey): "cross-site session request rejected"})
 			}
 			if !PrincipalCanAccessREST(principal, operationID...) {
@@ -645,8 +649,8 @@ func requestScheme(ctx huma.Context) string {
 	return "http"
 }
 
-func sessionOriginRejected(principal *Principal, origin, host, scheme string) bool {
-	return principal != nil && principal.SessionID != "" && origin != "" && !cookieRequestAllowed(http.MethodPost, origin, host, scheme)
+func SessionOriginRejected(principal *Principal, origin, host, scheme string) bool {
+	return principal != nil && (principal.SessionID != "" || principal.Scope == "") && origin != "" && !cookieRequestAllowed(http.MethodPost, origin, host, scheme)
 }
 
 func HasBrowserOrigin(ctx context.Context) bool {

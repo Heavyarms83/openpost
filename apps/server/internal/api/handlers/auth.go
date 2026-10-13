@@ -423,10 +423,11 @@ type recoveryCodeChallengePayload struct {
 }
 
 type passkeyChallengePayload struct {
-	ParentChallengeID string `json:"parent_challenge_id,omitempty"`
-	SessionData       string `json:"session_data"`
-	SessionID         string `json:"session_id,omitempty"`
-	Action            string `json:"action,omitempty"`
+	ParentChallengeID string          `json:"parent_challenge_id,omitempty"`
+	Options           json.RawMessage `json:"options,omitempty"`
+	SessionData       string          `json:"session_data"`
+	SessionID         string          `json:"session_id,omitempty"`
+	Action            string          `json:"action,omitempty"`
 }
 
 func (h *AuthHandler) Register(api huma.API) {
@@ -651,6 +652,9 @@ func (h *AuthHandler) Login(api huma.API) {
 			Where("email = ?", normalizedEmail).
 			Scan(ctx)
 		if err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				_ = h.auth.CheckPassword(input.Body.Password, "")
+			}
 			return nil, huma.Error401Unauthorized("invalid credentials")
 		}
 		if h.identity != nil {
@@ -659,6 +663,7 @@ func (h *AuthHandler) Login(api huma.API) {
 				return nil, huma.Error500InternalServerError("failed to evaluate sign-in policy")
 			}
 			if !allowed {
+				_ = h.auth.CheckPassword(input.Body.Password, "")
 				return nil, huma.Error401Unauthorized("invalid credentials")
 			}
 		}
@@ -885,7 +890,12 @@ func (h *AuthHandler) BeginPasskeyLogin(api huma.API) {
 			return nil, huma.Error500InternalServerError("failed to persist passkey challenge")
 		}
 
-		passkeyChallengeID, err := h.createLoginPasskeyChallenge(ctx, challenge, passkeyChallengePayload{
+		optionData, err := json.Marshal(options)
+		if err != nil {
+			return nil, huma.Error500InternalServerError("failed to persist passkey options")
+		}
+		passkeyChallengeID, storedOptions, err := h.createLoginPasskeyChallenge(ctx, challenge, passkeyChallengePayload{
+			Options:           optionData,
 			ParentChallengeID: challenge.ID,
 			SessionData:       sessionData,
 		})
@@ -895,7 +905,7 @@ func (h *AuthHandler) BeginPasskeyLogin(api huma.API) {
 
 		resp := &PasskeyCeremonyOutput{}
 		resp.Body.ChallengeID = passkeyChallengeID
-		resp.Body.Options = options
+		resp.Body.Options = storedOptions
 		return resp, nil
 	})
 }
@@ -2399,22 +2409,33 @@ func deviceName(ua string) string {
 
 func (h *AuthHandler) SetRateLimiter(limiter *ratelimit.Limiter) { h.limiter = limiter }
 
-func (h *AuthHandler) createLoginPasskeyChallenge(ctx context.Context, parent *models.AuthChallenge, payload passkeyChallengePayload) (string, error) {
+func (h *AuthHandler) createLoginPasskeyChallenge(ctx context.Context, parent *models.AuthChallenge, payload passkeyChallengePayload) (string, json.RawMessage, error) {
 	data, err := json.Marshal(payload)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	record := &models.AuthChallenge{ID: "passkey_" + parent.ID, UserID: parent.UserID, Type: authChallengePasskeyLogin, Payload: string(data), ExpiresAt: parent.ExpiresAt, CreatedAt: time.Now().UTC()}
 	result, err := h.db.NewInsert().Model(record).On("CONFLICT (id) DO NOTHING").Exec(ctx)
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	count, err := result.RowsAffected()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
-	if count != 1 {
-		return "", sql.ErrNoRows
+	if count == 1 {
+		return record.ID, payload.Options, nil
 	}
-	return record.ID, nil
+	existing, err := h.getChallenge(ctx, record.ID, authChallengePasskeyLogin)
+	if err != nil {
+		return "", nil, err
+	}
+	var stored passkeyChallengePayload
+	if err = json.Unmarshal([]byte(existing.Payload), &stored); err != nil {
+		return "", nil, err
+	}
+	if stored.ParentChallengeID != parent.ID || len(stored.Options) == 0 {
+		return "", nil, sql.ErrNoRows
+	}
+	return existing.ID, stored.Options, nil
 }
