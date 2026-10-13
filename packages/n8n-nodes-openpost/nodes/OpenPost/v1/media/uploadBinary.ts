@@ -78,9 +78,15 @@ export async function uploadBinaryMedia(
     : openPostApiUrl(input.baseUrl, completePath.replace(/^\/api\/v1/, ""));
   const parsedCompleteUrl = new URL(completeUrl);
   const apiOrigin = new URL(openPostApiUrl(input.baseUrl, "/")).origin;
-  if (parsedCompleteUrl.origin !== apiOrigin || parsedCompleteUrl.username || parsedCompleteUrl.password ||
-      !parsedCompleteUrl.pathname.startsWith("/api/v1/media/upload-session/") ||
-      !parsedCompleteUrl.pathname.endsWith("/complete") || parsedCompleteUrl.search || parsedCompleteUrl.hash) {
+  if (
+    parsedCompleteUrl.origin !== apiOrigin ||
+    parsedCompleteUrl.username ||
+    parsedCompleteUrl.password ||
+    !parsedCompleteUrl.pathname.startsWith("/api/v1/media/upload-session/") ||
+    !parsedCompleteUrl.pathname.endsWith("/complete") ||
+    parsedCompleteUrl.search ||
+    parsedCompleteUrl.hash
+  ) {
     throw new Error("OpenPost returned an invalid upload completion URL.");
   }
 
