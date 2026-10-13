@@ -345,28 +345,31 @@ func TestMCPRejectsMissingAuthorization(t *testing.T) {
 
 func TestMCPRejectsUntrustedBrowserOrigins(t *testing.T) {
 	t.Parallel()
-
 	srv := newMCPTestServer(t)
-	payload := bytes.NewBufferString(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)
-	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", payload)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer web-token")
-	req.Header.Set("Origin", "https://attacker.example")
-	rec := httptest.NewRecorder()
-	srv.echo.ServeHTTP(rec, req)
-
-	require.Equal(t, http.StatusForbidden, rec.Code)
-	require.Contains(t, rec.Body.String(), "Origin")
-
 	srv.handler.SetAllowedOrigins([]string{"https://trusted-client.example"})
-	payload = bytes.NewBufferString(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`)
-	req = httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", payload)
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer web-token")
-	req.Header.Set("Origin", "https://trusted-client.example")
-	rec = httptest.NewRecorder()
-	srv.echo.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
+	srv.handler.auth = mcpScopeAuthenticator{
+		"web-token": {UserID: "user-1", SessionID: "session"},
+		"mcp-token": {UserID: "user-1", Scope: "mcp:full"},
+	}
+	for _, tc := range []struct {
+		origin, token string
+		status        int
+	}{
+		{"https://attacker.example", "web-token", http.StatusForbidden},
+		{"https://trusted-client.example", "web-token", http.StatusUnauthorized},
+		{"https://trusted-client.example", "mcp-token", http.StatusOK},
+		{"https://app.openpost.test", "web-token", http.StatusOK},
+	} {
+		t.Run(tc.origin+"/"+tc.token, func(t *testing.T) {
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/mcp", bytes.NewBufferString(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`))
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Authorization", "Bearer "+tc.token)
+			req.Header.Set("Origin", tc.origin)
+			rec := httptest.NewRecorder()
+			srv.echo.ServeHTTP(rec, req)
+			require.Equal(t, tc.status, rec.Code, rec.Body.String())
+		})
+	}
 }
 
 func TestMCPEnforcesHTTPContentTypeAndProtocolVersion(t *testing.T) {
