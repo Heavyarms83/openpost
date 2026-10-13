@@ -388,7 +388,7 @@ func TestTextCardPreviewRateLimitProtectsAllPreviewCallers(t *testing.T) {
 	_, err = h.previewTextCardForUser(t.Context(), userID, input)
 	require.NoError(t, err)
 	_, err = h.previewTextCardForUser(t.Context(), userID, input)
-	require.Error(t, err)
+	require.ErrorContains(t, err, "rate limited")
 	var status interface{ GetStatus() int }
 	require.ErrorAs(t, err, &status)
 	require.Equal(t, http.StatusTooManyRequests, status.GetStatus())
