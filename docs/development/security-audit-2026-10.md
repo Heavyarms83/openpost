@@ -236,10 +236,10 @@ Three isolated agents checked authentication and tooling, media and frontend, an
 ### Verification
 
 - Regressions were observed failing for session-origin checks, passkey admission/lifecycle, revoked upload tickets, quota admission/completion, approval mismatch, provider redirects, workflow limits and Quick Cut fingerprint collisions before the fixes passed.
-- Backend packages pass the full tagged development suite except two localhost provider fixtures rejected by the new SSRF guard; those fixtures are being adapted at the existing adapter boundary. Full CLI tests pass.
+- The full tagged development backend run passed every package except two localhost provider fixtures rejected by the new SSRF guard. After adapting those fixtures at the existing adapter boundary, both regressions and the complete handlers suite pass. Full CLI tests pass.
 - Real local PostgreSQL checks pass first-workspace concurrency, UTC handling, concurrent guarded usage admission, single reservation charging and definite-failure refunds. SQLite admission and migration tests pass. The temporary PostgreSQL instance was stopped afterward.
 - Quick Cut fingerprint regression, n8n typecheck and eight tests, three selected-generator regressions, and isolated API/TypeScript/docs/CLI/n8n contract checks pass. Contract checks leave the original checkout untouched.
-- Documentation export and metadata validation pass. Maintained links pass across 299 Markdown files, 536 configured navigation targets and 113 reachable documentation pages. Browser reader checks and final visual inspection are tracked in the pull request.
-- Secret scanning reports no leaks in the candidate history or tracked working files. No active leaked secret was established by H9.
+- Documentation export and metadata validation pass. Maintained links pass across 299 Markdown files, 536 configured navigation targets and 113 reachable documentation pages. Visual inspection of the proxy guide at 320px, 390px and 1280px in light/dark appearance found no horizontal overflow. The browser reader suite passed 70 cases initially; two multi-page cases exceeded their total time budget and were retried serially with a larger budget. Final retry results are tracked in the pull request.
+- The changed-code Fallow gate passes. Secret scanning reports no leaks in the candidate history or tracked working files. No active leaked secret was established by H9.
 
 No successful live provider OAuth exchange, paid provider request, production migration or deployment was performed during verification. Synthetic Meta form POST probes used invalid dummy credentials and reached application validation. Historical line numbers above can drift after remediation.
