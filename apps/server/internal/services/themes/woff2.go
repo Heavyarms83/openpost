@@ -374,6 +374,7 @@ func decodeWOFF2Tables(content []byte) (map[string][]byte, error) {
 	}
 
 	tables := make(map[string][]byte, numTables)
+	hasTransformedMetrics := false
 	offset = 0
 	for _, table := range directory {
 		end := offset + int(table.transformedLength)
@@ -382,8 +383,19 @@ func decodeWOFF2Tables(content []byte) (map[string][]byte, error) {
 		}
 		if !table.transformed {
 			tables[table.tag] = decoded[offset:end]
+		} else if table.tag == "hmtx" {
+			hasTransformedMetrics = true
 		}
 		offset = end
+	}
+	if hasTransformedMetrics {
+		// The bounded container checks above precede reconstruction. The maintained
+		// decoder restores omitted side bearings from glyph outlines and locations.
+		sfnt, err := convertWOFF2ToSFNT(content)
+		if err != nil {
+			return nil, fmt.Errorf("WOFF2 transformed metrics are invalid: %w", err)
+		}
+		return decodeSFNTTables(sfnt)
 	}
 	return tables, nil
 }
