@@ -1,8 +1,9 @@
 package models
 
 import (
-	"github.com/uptrace/bun"
 	"time"
+
+	"github.com/uptrace/bun"
 )
 
 // MonthlyUsageReservation keeps one logical provider write charged across

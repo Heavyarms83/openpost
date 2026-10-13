@@ -6,7 +6,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
-	"github.com/openpost/backend/internal/services/medialifecycle"
 	"hash/crc32"
 	"image"
 	"image/color"
@@ -25,6 +24,7 @@ import (
 
 	"github.com/openpost/backend/internal/models"
 	"github.com/openpost/backend/internal/services/entitlements"
+	"github.com/openpost/backend/internal/services/medialifecycle"
 	"github.com/openpost/backend/internal/services/sessions"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/image/bmp"
