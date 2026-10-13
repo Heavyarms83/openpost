@@ -270,16 +270,10 @@ func hasCredentialField(value any) bool {
 }
 func validateInlineCredentials(inputs map[string]any) error {
 	reject := errors.New("store authentication in Connections instead of the workflow")
-	if address, err := url.Parse(textInput(inputs, "url")); err == nil {
-		if address.User != nil {
-			return reject
-		}
-		for name, values := range address.Query() {
-			if credentialField(name) && len(values) > 0 && values[0] != "" {
-				return reject
-			}
-		}
+	if address, err := url.Parse(textInput(inputs, "url")); err == nil && (address.User != nil || hasCredentialParameters(address.Query())) {
+		return reject
 	}
+
 	if query, err := stringMap(inputs["query"]); err == nil {
 		for name, value := range query {
 			if credentialField(name) && value != "" {
@@ -293,12 +287,23 @@ func validateInlineCredentials(inputs map[string]any) error {
 		if hasCredentialField(value) {
 			return reject
 		}
-	} else if fields, err := url.ParseQuery(body); err == nil {
-		for name, values := range fields {
-			if credentialField(name) && len(values) > 0 && values[0] != "" {
-				return reject
+	} else if fields, err := url.ParseQuery(body); err == nil && hasCredentialParameters(fields) {
+		return reject
+	}
+
+	return nil
+}
+
+func hasCredentialParameters(fields url.Values) bool {
+	for name, values := range fields {
+		if !credentialField(name) {
+			continue
+		}
+		for _, value := range values {
+			if value != "" {
+				return true
 			}
 		}
 	}
-	return nil
+	return false
 }

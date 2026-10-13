@@ -6,16 +6,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/openpost/backend/internal/ai"
-	"github.com/openpost/backend/internal/jobregistry"
-	"github.com/openpost/backend/internal/models"
-	"github.com/stretchr/testify/require"
 	"io"
 	"net/http"
 	"net/url"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/openpost/backend/internal/ai"
+	"github.com/openpost/backend/internal/jobregistry"
+	"github.com/openpost/backend/internal/models"
+	"github.com/stretchr/testify/require"
 )
 
 func TestScheduleRequiresMatchingReviewedPublication(t *testing.T) {
@@ -66,7 +67,7 @@ func TestHTTPResponseRedactsEncodedCredentials(t *testing.T) {
 	}
 }
 func TestHTTPRejectsInlineCredentialsBeforeSavingAndResolvedDispatch(t *testing.T) {
-	for _, inputs := range []map[string]any{{"url": "https://8.8.8.8/?access_token=private"}, {"url": "https://8.8.8.8/", "query": map[string]any{"api-key": "private"}}, {"url": "https://8.8.8.8/", "body": `{"auth":{"password":"private"}}`}, {"url": "https://8.8.8.8/", "body": "access_token=private"}} {
+	for _, inputs := range []map[string]any{{"url": "https://8.8.8.8/?access_token=private"}, {"url": "https://8.8.8.8/?access_token=&access_token=private"}, {"url": "https://8.8.8.8/", "query": map[string]any{"api-key": "private"}}, {"url": "https://8.8.8.8/", "body": `{"auth":{"password":"private"}}`}, {"url": "https://8.8.8.8/", "body": "access_token=private"}} {
 		t.Run(inputs["url"].(string), func(t *testing.T) {
 			s, actor := workflowTestService(t, nil)
 			bindings := map[string]Value{"method": literal("POST")}
