@@ -3,10 +3,7 @@ import { bytesToHex } from '@noble/hashes/utils';
 
 // Hash every byte without buffering the entire source in memory. Sampled hashes
 // cannot safely validate cached transcripts or relinked media.
-export async function createHash(
-	file: File,
-	signal?: AbortSignal
-): Promise<string> {
+export async function createHash(file: File, signal?: AbortSignal): Promise<string> {
 	const hash = sha256.create();
 	const chunkSize = 256 * 1024;
 	for (let offset = 0; offset < file.size; offset += chunkSize) {
