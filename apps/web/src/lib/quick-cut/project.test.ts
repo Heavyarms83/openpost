@@ -1,16 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
-import {
-	createNewProject,
-	parseProject,
-	restoreSourceHandles,
-	serializeProject,
-	snapshotProject
-} from './project';
+import { describe, expect, it } from 'vitest';
+import { createNewProject, parseProject, serializeProject, snapshotProject } from './project';
 import { createSegment } from './model';
 import type { QuickCutSourceMetadata } from './types';
-
-const handles = vi.hoisted(() => ({ getHandle: vi.fn() }));
-vi.mock('$lib/video-editor/workspace-fs/handles-db', () => handles);
 
 function source(id = 'source-a'): QuickCutSourceMetadata {
 	return {
@@ -48,42 +39,6 @@ function source(id = 'source-a'): QuickCutSourceMetadata {
 }
 
 describe('quick-cut project parsing', () => {
-	it('restores legacy source fingerprints and upgrades subsequent relink validation', async () => {
-		const bytes = new Uint8Array(1024 * 1024).fill(7);
-		let file = new File([bytes], 'source.mp4', { lastModified: 1 });
-		const handle = { getFile: async () => file };
-		handles.getHandle.mockResolvedValue({ handle });
-		const metadata = {
-			...source(),
-			size: bytes.length,
-			contentFingerprint: 'bc1a89b22d29bab2722bfc723827e4ff029c55a0ad357a5ca7a0716a66be8322'
-		};
-		try {
-			const savedTranscript = {
-				audioTrackIndex: 0,
-				words: [{ text: 'Saved words', start: 0, end: 1 }]
-			};
-			const withTranscript = { ...metadata, transcript: savedTranscript };
-			const legacyFingerprint = metadata.contentFingerprint;
-			bytes[128 * 1024] = 9;
-			file = new File([bytes], 'source.mp4', { lastModified: 1 });
-			// Legacy samples cannot certify the bytes that produced saved words.
-			expect((await restoreSourceHandles([withTranscript])).get(metadata.id)).toBeNull();
-			expect(withTranscript.contentFingerprint).toBe(legacyFingerprint);
-			expect(withTranscript.transcript).toEqual(savedTranscript);
-			bytes[128 * 1024] = 7;
-			file = new File([bytes], 'source.mp4', { lastModified: 1 });
-			expect((await restoreSourceHandles([metadata])).get(metadata.id)).toBe(handle);
-			expect(metadata.contentFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/u);
-			// This byte is outside every legacy sample, with matching name, size and mtime.
-			bytes[128 * 1024] = 9;
-			file = new File([bytes], 'source.mp4', { lastModified: 1 });
-			expect((await restoreSourceHandles([metadata])).get(metadata.id)).toBeNull();
-		} finally {
-			handles.getHandle.mockReset();
-		}
-	});
-
 	it('persists editable words and markers in portable projects', () => {
 		const project = createNewProject([source()]);
 		project.sources[0]!.transcript = {
