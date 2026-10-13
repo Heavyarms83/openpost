@@ -563,5 +563,4 @@ func TestTrustedProxyNetworkAssertions(t *testing.T) {
 			})
 		}
 	}
-
 }
