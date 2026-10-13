@@ -3,7 +3,10 @@ import { describe, expect, test } from "bun:test";
 import { uploadBinaryMedia } from "../../../../../nodes/OpenPost/v1/media/uploadBinary";
 
 describe("OpenPost binary upload", () => {
-  test("uploads bytes to the returned target without forwarding bearer auth", async () => {
+  test.each([
+ { completeURL: "/api/v1/media/upload-session/session-1/complete", reject: false },
+ { completeURL: "https://evil.example/steal", reject: true },
+])("validates completion URL $completeURL before credential use", async ({ completeURL, reject }) => {
     const calls: Array<{ authenticated: boolean; options: Record<string, any> }> = [];
     const context = {
       getInputData() {
@@ -26,7 +29,7 @@ describe("OpenPost binary upload", () => {
             return {
               body: {
                 media_id: "media-1",
-                complete_url: "/api/v1/media/upload-session/session-1/complete",
+                complete_url: completeURL,
                 deduped: false,
                 upload: {
                   method: "PUT",
@@ -43,7 +46,7 @@ describe("OpenPost binary upload", () => {
       },
     } as any;
 
-    await uploadBinaryMedia(context, {
+    const uploading = uploadBinaryMedia(context, {
       baseUrl: "https://openpost.example",
       itemIndex: 0,
       executionId: "exec-1",
@@ -51,6 +54,13 @@ describe("OpenPost binary upload", () => {
       binaryPropertyName: "data",
       idempotencyKey: "event-1",
     });
+
+    if (reject) {
+ await expect(uploading).rejects.toThrow("completion URL");
+ expect(calls.some((call) => String(call.options.url).includes("evil.example"))).toBe(false);
+ return;
+ }
+ await uploading;
 
     const uploadCall = calls.find((call) => call.options.url === "https://storage.example/upload");
     expect(uploadCall?.authenticated).toBe(false);

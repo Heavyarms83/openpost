@@ -1,25 +1,20 @@
-export async function createHash(file: File): Promise<string> {
-	const size = file.size;
-	const chunkSize = 65536;
-	const parts: Blob[] = [];
-	// Head
-	parts.push(file.slice(0, Math.min(chunkSize, size)));
-	// Middle
-	if (size > chunkSize * 2) {
-		const midStart = Math.floor(size / 2) - Math.floor(chunkSize / 2);
-		parts.push(file.slice(midStart, midStart + chunkSize));
+import { sha256 } from '@noble/hashes/sha2';
+import { bytesToHex } from '@noble/hashes/utils';
+
+// Hash every byte without buffering the entire source in memory. Sampled hashes
+// cannot safely validate cached transcripts or relinked media.
+export async function createHash(
+	file: File,
+	signal?: AbortSignal
+): Promise<string> {
+	const hash = sha256.create();
+	const chunkSize = 256 * 1024;
+	for (let offset = 0; offset < file.size; offset += chunkSize) {
+		signal?.throwIfAborted();
+		const chunk = await file.slice(offset, offset + chunkSize).arrayBuffer();
+		signal?.throwIfAborted();
+		hash.update(new Uint8Array(chunk));
 	}
-	// Tail
-	if (size > chunkSize) {
-		parts.push(file.slice(Math.max(0, size - chunkSize), size));
-	}
-	// Size as well (to detect same-head/middle/tail but different size)
-	const sizeBytes = new TextEncoder().encode(String(size));
-	const blobs = [...parts, new Blob([sizeBytes])];
-	const combined = new Blob(blobs);
-	const buf = await combined.arrayBuffer();
-	const hash = await crypto.subtle.digest('SHA-256', buf);
-	return Array.from(new Uint8Array(hash))
-		.map((b) => b.toString(16).padStart(2, '0'))
-		.join('');
+	signal?.throwIfAborted();
+	return bytesToHex(hash.digest());
 }
