@@ -57,6 +57,9 @@ func TrustedProxyMiddleware(cidrs []string) echo.MiddlewareFunc {
 			req.Header.Del("X-Real-Ip")
 			req.Header.Del("Forwarded")
 			req.Header.Del("X-Forwarded-Host")
+			req.Header.Del(echo.HeaderXForwardedProtocol)
+			req.Header.Del(echo.HeaderXForwardedSsl)
+			req.Header.Del(echo.HeaderXUrlScheme)
 			if client.IsValid() {
 				req.Header.Set("X-Forwarded-For", client.Unmap().String())
 			}

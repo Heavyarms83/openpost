@@ -535,6 +535,11 @@ func TestTrustedProxyNetworkAssertions(t *testing.T) {
 			e.GET("/", func(c echo.Context) error {
 				require.Equal(t, tc.wantIP, c.RealIP())
 				require.Equal(t, tc.wantProto, c.Request().Header.Get("X-Forwarded-Proto"))
+				expectedScheme := tc.wantProto
+				if expectedScheme == "" {
+					expectedScheme = "http"
+				}
+				require.Equal(t, expectedScheme, c.Scheme())
 				return c.NoContent(200)
 			})
 			req := httptest.NewRequestWithContext(t.Context(), "GET", "http://app.openpost.test/", nil)
@@ -544,4 +549,19 @@ func TestTrustedProxyNetworkAssertions(t *testing.T) {
 			e.ServeHTTP(httptest.NewRecorder(), req)
 		})
 	}
+	for header, value := range map[string]string{"X-Forwarded-Protocol": "https", "X-Forwarded-Ssl": "on", "X-Url-Scheme": "https"} {
+		for _, peer := range []string{"203.0.113.4:5000", "10.0.0.2:5000"} {
+			t.Run(header+"/"+peer, func(t *testing.T) {
+				e := echo.New()
+				e.Pre(TrustedProxyMiddleware([]string{"10.0.0.0/24"}))
+				e.GET("/", func(c echo.Context) error { require.Equal(t, "http", c.Scheme()); return c.NoContent(http.StatusOK) })
+				req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "http://app.openpost.test/", nil)
+				req.RemoteAddr = peer
+				req.Header.Set(header, value)
+				req.Header.Set("X-Forwarded-Proto", "malicious-proto")
+				e.ServeHTTP(httptest.NewRecorder(), req)
+			})
+		}
+	}
+
 }

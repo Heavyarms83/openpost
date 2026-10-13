@@ -2,17 +2,18 @@ package platform
 
 import (
 	"context"
-	"github.com/stretchr/testify/require"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestDefaultProviderHTTPRejectsPrivateNetwork(t *testing.T) {
 	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { requests++; _, _ = w.Write([]byte(`{}`)) }))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { requests++; _, _ = w.Write([]byte(`{}`)) }))
 	defer server.Close()
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, server.URL, nil)
 	require.NoError(t, err)
@@ -24,7 +25,7 @@ func TestDefaultProviderHTTPRejectsPrivateNetwork(t *testing.T) {
 	require.Zero(t, requests)
 }
 func TestProviderHTTPBoundsResponseBody(t *testing.T) {
-	client := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+	client := &http.Client{Transport: roundTripFunc(func(_ *http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(strings.Repeat("x", 16*1024*1024+1)))}, nil
 	})}
 	_, err := doRequestWithClient(context.Background(), client, http.MethodGet, "https://provider.example/api", nil, nil)
@@ -52,7 +53,10 @@ func TestProviderRedirectDoesNotForwardCredentialsToAnotherOrigin(t *testing.T) 
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://8.8.8.8/api", nil)
 	require.NoError(t, err)
 	req.Header.Set("Authorization", "Bearer secret")
-	_, err = client.Do(req)
+	resp, err := client.Do(req)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
 	require.ErrorContains(t, err, "redirect changed origin")
 	require.Equal(t, 1, requests)
 }
@@ -69,7 +73,10 @@ func TestProviderRedirectDoesNotReplayLoginBodyToAnotherOrigin(t *testing.T) {
 	})
 	req, err := http.NewRequestWithContext(t.Context(), http.MethodPost, "https://8.8.8.8/login", strings.NewReader(`{"password":"secret"}`))
 	require.NoError(t, err)
-	_, err = client.Do(req)
+	resp, err := client.Do(req)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
 	require.ErrorContains(t, err, "redirect changed origin")
 	require.Equal(t, 1, requests)
 }

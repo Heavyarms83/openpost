@@ -264,7 +264,6 @@ func TestLemmyRejectsV4Instances(t *testing.T) {
 }
 
 func TestResolveCommunityTargetKeys(t *testing.T) {
-
 	resolved, err := ResolveTargetKey("lemmy", "lemmy", "", map[string]interface{}{"community": "https://remote.example/c/selfhosted"})
 	require.NoError(t, err)
 	require.Equal(t, "lemmy:community:remote.example:selfhosted", resolved)

@@ -82,7 +82,11 @@ func newDefaultHTTPClient() *http.Client {
 			}
 		}
 	}
-	return &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: func(req *http.Request, via []*http.Request) error {
+	return &http.Client{Transport: transport, Timeout: 30 * time.Second, CheckRedirect: providerRedirectPolicy(policy)}
+}
+
+func providerRedirectPolicy(policy netguard.URLPolicy) func(*http.Request, []*http.Request) error {
+	return func(req *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
 			return fmt.Errorf("provider redirect limit exceeded")
 		}
@@ -94,7 +98,7 @@ func newDefaultHTTPClient() *http.Client {
 			}
 		}
 		return netguard.ValidateURL(req.Context(), req.URL, policy)
-	}}
+	}
 }
 
 // DoRequest executes an HTTP request and returns the response body.
