@@ -3,6 +3,7 @@ package workflows
 import (
 	"context"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -89,6 +90,9 @@ func requestTimeout(inputs map[string]any) (time.Duration, error) {
 }
 
 func prepareHTTPRequest(ctx context.Context, key string, inputs map[string]any) (*http.Request, error) {
+	if err := validateInlineCredentials(inputs); err != nil {
+		return nil, err
+	}
 	address, err := url.Parse(textInput(inputs, "url"))
 	if err != nil || address.User != nil {
 		return nil, errors.New("enter an HTTP or HTTPS URL without credentials")
@@ -178,8 +182,7 @@ func decodeHTTPResponse(response *http.Response, secret, format string) (map[str
 	}
 	text := string(bytes)
 	if secret != "" {
-		text = strings.ReplaceAll(text, secret, "[redacted]")
-		text = strings.ReplaceAll(text, base64.StdEncoding.EncodeToString([]byte(secret)), "[redacted]")
+		text = redactResponse(text, secret).(string)
 	}
 	var body any = text
 
@@ -213,7 +216,15 @@ func redactResponse(value any, secret string) any {
 	}
 	switch data := value.(type) {
 	case string:
-		return strings.ReplaceAll(strings.ReplaceAll(data, secret, "[redacted]"), base64.StdEncoding.EncodeToString([]byte(secret)), "[redacted]")
+		quoted, _ := json.Marshal(secret)
+		variants := []string{secret, base64.StdEncoding.EncodeToString([]byte(secret)), base64.RawStdEncoding.EncodeToString([]byte(secret)), base64.URLEncoding.EncodeToString([]byte(secret)), url.QueryEscape(secret), url.PathEscape(secret), hex.EncodeToString([]byte(secret)), strings.ToUpper(hex.EncodeToString([]byte(secret))), string(quoted[1 : len(quoted)-1])}
+		slices.SortFunc(variants, func(a, b string) int { return len(b) - len(a) })
+		for _, variant := range variants {
+			if variant != "" {
+				data = strings.ReplaceAll(data, variant, "[redacted]")
+			}
+		}
+		return data
 	case []any:
 		for i, child := range data {
 			data[i] = redactResponse(child, secret)
@@ -229,4 +240,65 @@ func redactResponse(value any, secret string) any {
 	default:
 		return value
 	}
+}
+
+// Credential fields belong to encrypted Connections. Inspect structured HTTP
+// inputs only, leaving ordinary authored text and AI instructions unrestricted.
+func credentialField(name string) bool {
+	name = strings.ToLower(strings.NewReplacer("-", "", "_", "", ".", "").Replace(name))
+	return slices.Contains([]string{"authorization", "password", "passwd", "token", "accesstoken", "refreshtoken", "apikey", "clientsecret", "secret"}, name)
+}
+func hasCredentialField(value any) bool {
+	switch data := value.(type) {
+	case map[string]any:
+		for name, child := range data {
+			if credentialField(name) && child != nil && child != "" {
+				return true
+			}
+			if hasCredentialField(child) {
+				return true
+			}
+		}
+	case []any:
+		for _, child := range data {
+			if hasCredentialField(child) {
+				return true
+			}
+		}
+	}
+	return false
+}
+func validateInlineCredentials(inputs map[string]any) error {
+	reject := errors.New("store authentication in Connections instead of the workflow")
+	if address, err := url.Parse(textInput(inputs, "url")); err == nil {
+		if address.User != nil {
+			return reject
+		}
+		for name, values := range address.Query() {
+			if credentialField(name) && len(values) > 0 && values[0] != "" {
+				return reject
+			}
+		}
+	}
+	if query, err := stringMap(inputs["query"]); err == nil {
+		for name, value := range query {
+			if credentialField(name) && value != "" {
+				return reject
+			}
+		}
+	}
+	body := textInput(inputs, "body")
+	var value any
+	if json.Unmarshal([]byte(body), &value) == nil {
+		if hasCredentialField(value) {
+			return reject
+		}
+	} else if fields, err := url.ParseQuery(body); err == nil {
+		for name, values := range fields {
+			if credentialField(name) && len(values) > 0 && values[0] != "" {
+				return reject
+			}
+		}
+	}
+	return nil
 }

@@ -121,7 +121,27 @@ func (s *Service) generate(ctx context.Context, record runRecord, step Step, inp
 		model = s.decisionModel
 	}
 	usage := usageRecord{ID: record.ID + ":" + step.ID, WorkspaceID: record.WorkspaceID, UserID: authority.UserID, WorkflowID: record.WorkflowID, RunID: record.ID, StepID: step.ID, Kind: step.Kind, Model: model, State: StateRunning, CreatedAt: time.Now().UTC()}
-	if _, err := s.db.NewInsert().Model(&usage).Exec(ctx); err != nil {
+	if !s.aiEnabled {
+		return nil, errors.New("workflow AI is disabled")
+	}
+	if err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		if err := organizationguard.LockWorkspace(ctx, tx, record.WorkspaceID); err != nil {
+			return err
+		}
+		if s.aiMonthlyCalls > 0 {
+			now := usage.CreatedAt
+			month := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, time.UTC)
+			count, err := tx.NewSelect().Model((*usageRecord)(nil)).Where("workspace_id = ? AND created_at >= ? AND created_at < ?", record.WorkspaceID, month, month.AddDate(0, 1, 0)).Count(ctx)
+			if err != nil {
+				return err
+			}
+			if int64(count) >= s.aiMonthlyCalls {
+				return errors.New("workspace workflow AI monthly call limit reached")
+			}
+		}
+		_, err := tx.NewInsert().Model(&usage).Exec(ctx)
+		return err
+	}); err != nil {
 		return nil, err
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
