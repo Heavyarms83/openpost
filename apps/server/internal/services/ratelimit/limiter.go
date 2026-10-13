@@ -4,9 +4,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"github.com/uptrace/bun"
 	"sync"
 	"time"
+
+	"github.com/uptrace/bun"
 )
 
 type Limiter struct {
