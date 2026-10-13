@@ -25,6 +25,7 @@ import (
 
 	"github.com/openpost/backend/internal/models"
 	"github.com/openpost/backend/internal/services/entitlements"
+	"github.com/openpost/backend/internal/services/sessions"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/image/bmp"
 	"golang.org/x/image/tiff"
@@ -132,7 +133,11 @@ func TestMediaUploadSessionRejectsActiveDeclarations(t *testing.T) {
 func assertMCPUploadRejected(t *testing.T, content, expected string) {
 	t.Helper()
 	srv := newMCPTestServer(t)
-	srv.handler.auth = mcpScopeAuthenticator{"mcp-token": {UserID: "user-1", Scope: "mcp:full", WorkspaceID: "ws-1", SessionID: "session-1", ClientID: "client-1"}}
+	_, err := srv.db.NewCreateTable().Model((*models.UserSession)(nil)).Exec(t.Context())
+	require.NoError(t, err)
+	session, err := sessions.NewService(srv.db).CreateSession(t.Context(), sessions.CreateInput{UserID: "user-1", ExpiresAt: time.Now().Add(time.Hour)})
+	require.NoError(t, err)
+	srv.handler.auth = mcpScopeAuthenticator{"mcp-token": {UserID: "user-1", Scope: "mcp:full", WorkspaceID: "ws-1", SessionID: session.ID, ClientID: "client-1"}}
 	response := srv.request(t, "mcp-token", map[string]any{"jsonrpc": "2.0", "id": "ticket", "method": "tools/call", "params": map[string]any{"name": mcpToolCreateTicket, "arguments": map[string]any{"workspace_id": "ws-1", "filename": "proof.bin", "mime_type": "application/octet-stream", "size": len(content)}}})
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	var ticket struct {
