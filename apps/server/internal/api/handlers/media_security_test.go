@@ -55,9 +55,11 @@ func TestMediaUploadRejectsActiveContent(t *testing.T) {
 					response := srv.postJSON(t, "/api/v1/media/upload-session/"+id+"/complete", map[string]any{"workspace_id": "ws-1"})
 					require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
 					require.Empty(t, storage.objects, "rejected direct-upload bytes must be removed")
-					exists, err := srv.db.NewSelect().Model((*models.MediaAttachment)(nil)).Where("id = ?", id).Exists(t.Context())
-					require.NoError(t, err)
-					require.False(t, exists, "rejected uploads must not retain billable rows")
+					var failed models.MediaAttachment
+					require.NoError(t, srv.db.NewSelect().Model(&failed).Where("id = ?", id).Scan(t.Context()))
+					require.Equal(t, mediaFailedStatus, failed.ProcessingStatus)
+					require.Equal(t, "pending:"+id, failed.FileHash, "cleanup ownership must outlive the signed PUT capability")
+					require.Equal(t, int64(len(payload.content)), failed.Size)
 					return
 				}
 				var body bytes.Buffer
