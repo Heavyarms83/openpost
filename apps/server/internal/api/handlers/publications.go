@@ -1086,9 +1086,9 @@ func (h *PublicationHandler) schedulePublication(api huma.API) {
 	})
 }
 
-func (h *PublicationHandler) checkScheduledPublicationQuota(ctx context.Context, workspaceID string, scheduledAt time.Time) (bool, error) {
+func (h *PublicationHandler) checkScheduledPublicationQuota(ctx context.Context, workspaceID string, scheduledAt time.Time) error {
 	if h.usage == nil || h.entitlement == nil {
-		return false, publicationservice.NewError(publicationservice.ErrorTemporaryUnavailable, errors.New("scheduled publication usage is unavailable"))
+		return publicationservice.NewError(publicationservice.ErrorTemporaryUnavailable, errors.New("scheduled publication usage is unavailable"))
 	}
 	request := entitlements.Request{
 		WorkspaceID: workspaceID,
@@ -1097,10 +1097,10 @@ func (h *PublicationHandler) checkScheduledPublicationQuota(ctx context.Context,
 	}
 	decision, err := h.entitlement.Check(ctx, request)
 	if err != nil {
-		return false, publicationservice.NewError(publicationservice.ErrorTemporaryUnavailable, errors.New("failed to check scheduled publication limit"))
+		return publicationservice.NewError(publicationservice.ErrorTemporaryUnavailable, errors.New("failed to check scheduled publication limit"))
 	}
 	if !decision.Allowed {
-		return false, scheduledPublicationQuotaError(decision)
+		return scheduledPublicationQuotaError(decision)
 	}
 	current, err := h.usage.CurrentMonthly(ctx, workspaceID, entitlements.LimitScheduledPostsMonthly, scheduledAt)
 	if err != nil {
@@ -1108,22 +1108,22 @@ func (h *PublicationHandler) checkScheduledPublicationQuota(ctx context.Context,
 			// Unlimited deployments do not depend on quota storage to publish.
 			// Record usage when the counter schema is present, but keep sparse
 			// self-hosted upgrades and application fixtures operational.
-			return false, nil
+			return nil
 		}
-		return false, publicationservice.NewError(publicationservice.ErrorTemporaryUnavailable, errors.New("failed to load scheduled publication usage"))
+		return publicationservice.NewError(publicationservice.ErrorTemporaryUnavailable, errors.New("failed to load scheduled publication usage"))
 	}
 	if decision.Unlimited {
-		return true, nil
+		return nil
 	}
 	request.Current = current
 	decision, err = h.entitlement.Check(ctx, request)
 	if err != nil {
-		return false, publicationservice.NewError(publicationservice.ErrorTemporaryUnavailable, errors.New("failed to check scheduled publication limit"))
+		return publicationservice.NewError(publicationservice.ErrorTemporaryUnavailable, errors.New("failed to check scheduled publication limit"))
 	}
 	if !decision.Allowed {
-		return false, scheduledPublicationQuotaError(decision)
+		return scheduledPublicationQuotaError(decision)
 	}
-	return true, nil
+	return nil
 }
 
 func scheduledPublicationQuotaError(decision entitlements.Decision) error {

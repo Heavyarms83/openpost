@@ -228,7 +228,7 @@ func newOAuthCallbackRedirectTestServer(t *testing.T, providerName string, adapt
 		(*models.SocialAccount)(nil),
 		(*models.Job)(nil),
 	)
-	seedOAuthWorkspaceBoundary(t, db, "ws-1")
+	seedOAuthTestWorkspace(t, db)
 	_, err := db.NewInsert().Model(&models.WorkspaceMember{
 		WorkspaceID: "ws-1",
 		UserID:      "user-1",
@@ -282,7 +282,8 @@ func TestOAuthCallbackCannotConnectWithoutInitiatingActor(t *testing.T) {
 	require.Zero(t, count)
 }
 
-func seedOAuthWorkspaceBoundary(t *testing.T, db *bun.DB, workspaceID string) {
+func seedOAuthTestWorkspace(t *testing.T, db *bun.DB) {
+	const workspaceID = "ws-1"
 	t.Helper()
 	for _, model := range []any{(*models.Organization)(nil), (*models.Workspace)(nil)} {
 		_, err := db.NewCreateTable().Model(model).IfNotExists().Exec(t.Context())
