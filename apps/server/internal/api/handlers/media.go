@@ -3322,10 +3322,15 @@ func (h *MediaHandler) boundLegacyUploadBody(c echo.Context, userID string, batc
 	const envelopeBytes = 512 * 1024
 	capBytes := min(maximum, allowance) + envelopeBytes
 	if c.Request().ContentLength > capBytes {
-		return errors.New("upload exceeds available media capacity")
+		return huma.NewError(http.StatusRequestEntityTooLarge, "upload exceeds available media capacity")
 	}
 	c.Request().Body = http.MaxBytesReader(c.Response(), c.Request().Body, capBytes)
-	return c.Request().ParseMultipartForm(envelopeBytes)
+	err := c.Request().ParseMultipartForm(envelopeBytes)
+	var sizeErr *http.MaxBytesError
+	if errors.As(err, &sizeErr) {
+		return huma.NewError(http.StatusRequestEntityTooLarge, "upload exceeds available media capacity")
+	}
+	return err
 }
 
 func (h *MediaHandler) uploadMedia(c echo.Context) error {

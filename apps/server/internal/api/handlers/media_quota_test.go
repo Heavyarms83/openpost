@@ -329,7 +329,7 @@ func TestLegacyUploadRejectsOverAllowanceBeforeSpoolingFullBody(t *testing.T) {
 			resp := httptest.NewRecorder()
 			srv.echo.ServeHTTP(resp, req)
 			if tc.authorized {
-				require.Equal(t, http.StatusBadRequest, resp.Code)
+				require.Equal(t, http.StatusRequestEntityTooLarge, resp.Code)
 			} else {
 				require.Equal(t, http.StatusForbidden, resp.Code)
 			}
