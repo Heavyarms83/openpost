@@ -563,11 +563,15 @@ export async function restoreSourceHandles(
 				const sizeOk = file.size === m.size;
 				const nameOk = file.name === m.name;
 				const lastModifiedOk = m.lastModified === undefined || file.lastModified === m.lastModified;
+				if (!sizeOk || !nameOk || !lastModifiedOk) {
+					map.set(m.id, null);
+					continue;
+				}
 				const fingerprint = m.contentFingerprint
 					? await matchFingerprint(file, m.contentFingerprint)
 					: undefined;
 				const fingerprintOk = fingerprint !== null;
-				if (!sizeOk || !nameOk || !lastModifiedOk || !fingerprintOk) {
+				if (!fingerprintOk) {
 					map.set(m.id, null);
 					continue;
 				}

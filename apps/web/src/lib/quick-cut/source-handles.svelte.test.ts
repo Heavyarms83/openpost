@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import { restoreSourceHandles } from './project';
 import type { QuickCutSourceMetadata } from './types';
 import { saveHandle, deleteHandle } from '$lib/video-editor/workspace-fs/handles-db';
@@ -55,6 +55,13 @@ it('preserves legacy words for explicit relinking and upgrades verified source h
 		bytes[128 * 1024] = 9;
 		await write();
 		expect((await restoreSourceHandles([metadata])).get(id)).toBeNull();
+		const reads = vi.spyOn(Blob.prototype, 'arrayBuffer');
+		try {
+			expect((await restoreSourceHandles([{ ...metadata, name: 'wrong.mp4' }])).get(id)).toBeNull();
+			expect(reads).not.toHaveBeenCalled();
+		} finally {
+			reads.mockRestore();
+		}
 	} finally {
 		await deleteHandle('media', `quick-cut:${id}`);
 		await root.removeEntry(name);
