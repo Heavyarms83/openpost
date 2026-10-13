@@ -978,7 +978,17 @@ func TestCompleteMediaUploadSessionDedupesExistingMedia(t *testing.T) {
 		Where("id = ?", mediaID).
 		Count(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, 0, pendingCount)
+	require.Equal(t, 1, pendingCount, "dedup cleanup ownership must outlive the signed PUT capability")
+	var retired models.MediaAttachment
+	require.NoError(t, srv.db.NewSelect().Model(&retired).Where("id = ?", mediaID).Scan(t.Context()))
+	require.Equal(t, mediaFailedStatus, retired.ProcessingStatus)
+	stored, err := medialifecycle.StoredBytes(t.Context(), srv.db, "ws-1", "")
+	require.NoError(t, err)
+	require.Equal(t, int64(2*len(content)), stored)
+	// Reusing the outstanding PUT must not revive the retired reservation.
+	storage.objects[mediaID+".txt"] = content
+	response := srv.postJSON(t, "/api/v1/media/upload-session/"+mediaID+"/complete", map[string]any{"workspace_id": "ws-1"})
+	require.Equal(t, http.StatusBadRequest, response.Code)
 	current, err := srv.usage.CurrentMonthly(context.Background(), "ws-1", entitlements.LimitMediaBytesUploadedMonthly, time.Now())
 	require.NoError(t, err)
 	require.Equal(t, int64(0), current)

@@ -1771,23 +1771,32 @@ func (h *MediaHandler) completeDirectMediaUpload(ctx context.Context, userID, wo
 // every issued upload capability has expired. A late PUT then still has a
 // durable object key and remains included in stored-byte accounting.
 func (h *MediaHandler) discardInvalidDirectUpload(ctx context.Context, media *models.MediaAttachment) {
+	if err := h.retirePendingDirectUpload(ctx, media); err != nil {
+		log.Printf("failed to invalidate direct upload %s: %v", media.ID, err)
+	}
+}
+
+func (h *MediaHandler) retirePendingDirectUpload(ctx context.Context, media *models.MediaAttachment) error {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), mediaUploadCleanupTimeout)
 	defer cancel()
 	result, err := h.db.NewUpdate().Model((*models.MediaAttachment)(nil)).Set("processing_status = ?", mediaFailedStatus).
-		Where("id = ? AND workspace_id = ? AND file_hash = ? AND processing_status IN (?, ?)", media.ID, media.WorkspaceID, media.FileHash, mediaProcessingStatus, mediaUploadingStatus).Exec(cleanupCtx)
+		Where("id = ? AND workspace_id = ? AND file_hash LIKE ? AND processing_status IN (?, ?)", media.ID, media.WorkspaceID, "pending:%", mediaProcessingStatus, mediaUploadingStatus).Exec(cleanupCtx)
 	if err != nil {
-		log.Printf("failed to invalidate direct upload %s: %v", media.ID, err)
-		return
+		return err
 	}
 	changed, err := result.RowsAffected()
-	if err != nil || changed != 1 {
-		return
+	if err != nil {
+		return err
+	}
+	if changed != 1 {
+		return nil
 	}
 	// Immediate cleanup is best effort. The retained tombstone causes another
 	// durable deletion after the capability lifetime, including any later PUT.
 	if err := h.deleteMediaFiles(cleanupCtx, media); err != nil {
-		log.Printf("failed to remove invalid direct upload %s: %v", media.ID, err)
+		log.Printf("failed to remove retired direct upload %s: %v", media.ID, err)
 	}
+	return nil
 }
 
 func (h *MediaHandler) checkDirectUploadQuota(ctx context.Context, workspaceID string, media models.MediaAttachment, size int64) error {
@@ -1814,7 +1823,7 @@ func (h *MediaHandler) deduplicateDirectMediaUpload(ctx context.Context, workspa
 	if err := h.transferMediaTagAssignments(ctx, media.ID, existing.ID); err != nil {
 		return MediaUploadResult{}, false, err
 	}
-	if err := h.rollbackMediaRecord(ctx, &media); err != nil {
+	if err := h.retirePendingDirectUpload(ctx, &media); err != nil {
 		return MediaUploadResult{}, false, huma.Error500InternalServerError("failed to deduplicate media upload")
 	}
 	return mediaUploadResultFromAttachment(existing, true), true, nil
@@ -1852,8 +1861,8 @@ func (h *MediaHandler) resolveDirectUploadDeduplication(
 	if err := h.transferMediaTagAssignments(ctx, media.ID, existing.ID); err != nil {
 		return MediaUploadResult{}, false
 	}
-	if rollbackErr := h.rollbackMediaRecord(ctx, &media); rollbackErr != nil {
-		log.Printf("failed to roll back deduplicated direct upload %s: %v", media.ID, rollbackErr)
+	if rollbackErr := h.retirePendingDirectUpload(ctx, &media); rollbackErr != nil {
+		log.Printf("failed to retire deduplicated direct upload %s: %v", media.ID, rollbackErr)
 		return MediaUploadResult{}, false
 	}
 	return mediaUploadResultFromAttachment(existing, true), true
