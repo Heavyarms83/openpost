@@ -548,6 +548,12 @@ export async function restoreSourceHandles(
 ): Promise<Map<string, FileSystemFileHandle | null>> {
 	const map = new Map<string, FileSystemFileHandle | null>();
 	for (const m of metas) {
+		// Preserve saved words until an explicit Reconnect establishes their source.
+		// Legacy samples cannot prove that the unsampled bytes still match.
+		if (m.transcript && !m.contentFingerprint?.startsWith('sha256:')) {
+			map.set(m.id, null);
+			continue;
+		}
 		const rec = await getHandle('media', `quick-cut:${m.id}`);
 		if (rec) {
 			// SAFETY: handle was saved as FileSystemFileHandle for quick-cut source via saveHandle with kind 'media'

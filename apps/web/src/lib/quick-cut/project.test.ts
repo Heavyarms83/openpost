@@ -59,6 +59,20 @@ describe('quick-cut project parsing', () => {
 			contentFingerprint: 'bc1a89b22d29bab2722bfc723827e4ff029c55a0ad357a5ca7a0716a66be8322'
 		};
 		try {
+			const savedTranscript = {
+				audioTrackIndex: 0,
+				words: [{ text: 'Saved words', start: 0, end: 1 }]
+			};
+			const withTranscript = { ...metadata, transcript: savedTranscript };
+			const legacyFingerprint = metadata.contentFingerprint;
+			bytes[128 * 1024] = 9;
+			file = new File([bytes], 'source.mp4', { lastModified: 1 });
+			// Legacy samples cannot certify the bytes that produced saved words.
+			expect((await restoreSourceHandles([withTranscript])).get(metadata.id)).toBeNull();
+			expect(withTranscript.contentFingerprint).toBe(legacyFingerprint);
+			expect(withTranscript.transcript).toEqual(savedTranscript);
+			bytes[128 * 1024] = 7;
+			file = new File([bytes], 'source.mp4', { lastModified: 1 });
 			expect((await restoreSourceHandles([metadata])).get(metadata.id)).toBe(handle);
 			expect(metadata.contentFingerprint).toMatch(/^sha256:[0-9a-f]{64}$/u);
 			// This byte is outside every legacy sample, with matching name, size and mtime.
