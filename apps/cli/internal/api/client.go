@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/openpost/cli/internal/transport"
 	"io"
 	"mime"
 	"net/http"
@@ -22,6 +21,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/openpost/cli/internal/transport"
 )
 
 const defaultVersion = "dev"

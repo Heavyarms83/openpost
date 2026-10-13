@@ -345,7 +345,7 @@ func TestListAndRevokeAPITokensWireFormat(t *testing.T) {
 
 func TestAPIClientDoesNotForwardCredentialsThroughRedirects(t *testing.T) {
 	forwarded := false
-	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { forwarded = true; w.WriteHeader(200) }))
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { forwarded = true; w.WriteHeader(200) }))
 	defer target.Close()
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, target.URL, http.StatusTemporaryRedirect)
