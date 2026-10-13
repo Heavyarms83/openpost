@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -1129,4 +1130,47 @@ func TestCompleteMediaUploadSessionConcurrentRetryMetersOnce(t *testing.T) {
 	current, err := srv.usage.CurrentMonthly(t.Context(), "ws-1", entitlements.LimitMediaBytesUploadedMonthly, time.Now())
 	require.NoError(t, err)
 	require.Equal(t, int64(12), current)
+}
+
+type inspectionFailureStorage struct {
+	*fakeDirectUploadStorage
+	failRead bool
+}
+type failedInspectionReader struct{ io.ReadCloser }
+
+func (r failedInspectionReader) Read([]byte) (int, error) {
+	return 0, errors.New("temporary storage read failure")
+}
+func (s *inspectionFailureStorage) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	reader, err := s.fakeDirectUploadStorage.Open(ctx, key)
+	if err == nil && s.failRead {
+		return failedInspectionReader{reader}, nil
+	}
+	return reader, err
+}
+func TestDirectUploadCompletionRetriesAfterStorageInspectionFailure(t *testing.T) {
+	for _, failure := range []string{"object unavailable", "read failure"} {
+		t.Run(failure, func(t *testing.T) {
+			storage := &inspectionFailureStorage{fakeDirectUploadStorage: newFakeDirectUploadStorage()}
+			srv := newMediaDirectUploadTestServer(t, storage, entitlements.NewSelfHostedService())
+			mediaID := srv.createUploadSession(t, "copy.txt", "text/plain", 12)
+			var before models.MediaAttachment
+			require.NoError(t, srv.db.NewSelect().Model(&before).Where("id = ?", mediaID).Scan(t.Context()))
+			if failure == "read failure" {
+				storage.objects[mediaID+".txt"] = []byte("hello direct")
+				storage.failRead = true
+			}
+			response := srv.postJSON(t, "/api/v1/media/upload-session/"+mediaID+"/complete", map[string]any{"workspace_id": "ws-1"})
+			require.GreaterOrEqual(t, response.Code, 400)
+			var pending models.MediaAttachment
+			require.NoError(t, srv.db.NewSelect().Model(&pending).Where("id = ?", mediaID).Scan(t.Context()))
+			require.Equal(t, before.ProcessingStatus, pending.ProcessingStatus)
+			require.Equal(t, before.FileHash, pending.FileHash)
+			require.Empty(t, storage.deleted)
+			storage.objects[mediaID+".txt"] = []byte("hello direct")
+			storage.failRead = false
+			response = srv.postJSON(t, "/api/v1/media/upload-session/"+mediaID+"/complete", map[string]any{"workspace_id": "ws-1"})
+			require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+		})
+	}
 }

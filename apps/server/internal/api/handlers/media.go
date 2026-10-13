@@ -1721,9 +1721,13 @@ func (h *MediaHandler) completeDirectMediaUpload(ctx context.Context, userID, wo
 
 	inspection, err := h.inspectDirectMediaUpload(ctx, media)
 	if err != nil {
-		h.discardInvalidDirectUpload(ctx, &media)
+		var validation huma.StatusError
+		if errors.As(err, &validation) && validation.GetStatus() == http.StatusBadRequest {
+			h.discardInvalidDirectUpload(ctx, &media)
+		}
 		return result, err
 	}
+
 	if err := h.checkDirectUploadQuota(ctx, workspaceID, media, inspection.Size); err != nil {
 		return result, err
 	}
@@ -1879,25 +1883,21 @@ func (h *MediaHandler) inspectDirectMediaUpload(ctx context.Context, media model
 	var inspection mediaUploadInspection
 	sizeLimit := mediaUploadSizeLimit(media.AssetKind, media.OriginalFilename, media.MimeType)
 	if media.Size <= 0 {
-		h.markMediaUploadFailed(ctx, media.ID)
 		return inspection, huma.Error400BadRequest("uploaded media object is empty")
 	}
 	if media.Size > sizeLimit {
-		h.markMediaUploadFailed(ctx, media.ID)
 		return inspection, huma.Error400BadRequest(mediaUploadSizeError(sizeLimit))
 	}
 
 	file, err := h.storage.Open(ctx, filepath.Base(media.FilePath))
 	if err != nil {
-		h.markMediaUploadFailed(ctx, media.ID)
-		return inspection, huma.Error400BadRequest("uploaded media object was not found")
+		return inspection, huma.Error500InternalServerError("failed to access uploaded media")
 	}
 	defer file.Close()
 
 	if media.Size <= MaxBufferedMediaUploadBytes {
 		content, readErr := io.ReadAll(io.LimitReader(file, sizeLimit+1))
 		if readErr != nil {
-			h.markMediaUploadFailed(ctx, media.ID)
 			return inspection, huma.Error500InternalServerError("failed to read uploaded media")
 		}
 		inspection.Content = content
@@ -1913,7 +1913,6 @@ func (h *MediaHandler) inspectDirectMediaUpload(ctx context.Context, media model
 		prefix := make([]byte, 512)
 		prefixBytes, readErr := io.ReadFull(file, prefix)
 		if readErr != nil && !errors.Is(readErr, io.EOF) && !errors.Is(readErr, io.ErrUnexpectedEOF) {
-			h.markMediaUploadFailed(ctx, media.ID)
 			return inspection, huma.Error500InternalServerError("failed to read uploaded media")
 		}
 		prefix = prefix[:prefixBytes]
@@ -1921,7 +1920,6 @@ func (h *MediaHandler) inspectDirectMediaUpload(ctx context.Context, media model
 		_, _ = hasher.Write(prefix)
 		remainingBytes, copyErr := io.Copy(hasher, io.LimitReader(file, sizeLimit-int64(prefixBytes)+1))
 		if copyErr != nil {
-			h.markMediaUploadFailed(ctx, media.ID)
 			return inspection, huma.Error500InternalServerError("failed to read uploaded media")
 		}
 		inspection.Prefix = prefix
@@ -1929,15 +1927,12 @@ func (h *MediaHandler) inspectDirectMediaUpload(ctx context.Context, media model
 		inspection.FileHash = hex.EncodeToString(hasher.Sum(nil))
 	}
 	if inspection.Size > sizeLimit {
-		h.markMediaUploadFailed(ctx, media.ID)
 		return mediaUploadInspection{}, huma.Error400BadRequest(mediaUploadSizeError(sizeLimit))
 	}
 	if inspection.Size == 0 {
-		h.markMediaUploadFailed(ctx, media.ID)
 		return mediaUploadInspection{}, huma.Error400BadRequest("uploaded media object is empty")
 	}
 	if media.Size != inspection.Size {
-		h.markMediaUploadFailed(ctx, media.ID)
 		return mediaUploadInspection{}, huma.Error400BadRequest("uploaded media size does not match upload session")
 	}
 	return inspection, nil
