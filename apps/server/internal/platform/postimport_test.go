@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -13,7 +12,6 @@ import (
 )
 
 func TestNativePostSupportForKeepsXDisabled(t *testing.T) {
-	t.Parallel()
 
 	bluesky := NativePostSupportFor("bluesky")
 	require.True(t, bluesky.Supported)
@@ -33,7 +31,6 @@ func TestNativePostSupportForKeepsXDisabled(t *testing.T) {
 }
 
 func TestNormalizeNativePostItemRejectsNonExternalOrigin(t *testing.T) {
-	t.Parallel()
 
 	published := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
 	item, err := NormalizeNativePostItem(NativePostItem{
@@ -59,9 +56,8 @@ func TestNormalizeNativePostItemRejectsNonExternalOrigin(t *testing.T) {
 }
 
 func TestBlueskyReaderImportsOriginalsOnly(t *testing.T) {
-	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	server := newProviderTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		require.Equal(t, "/xrpc/app.bsky.feed.getAuthorFeed", req.URL.Path)
 		require.Equal(t, "did:plc:owner", req.URL.Query().Get("actor"))
 		require.Equal(t, "posts_no_replies", req.URL.Query().Get("filter"))
@@ -92,9 +88,8 @@ func TestBlueskyReaderImportsOriginalsOnly(t *testing.T) {
 }
 
 func TestBlueskyReaderStopsAtWatermark(t *testing.T) {
-	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := newProviderTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"cursor":"older","feed":[
 			{"post":{"uri":"at://did:plc:owner/app.bsky.feed.post/new","author":{"did":"did:plc:owner","handle":"o.t"},"record":{"text":"new","createdAt":"2026-09-20T10:00:00Z"},"indexedAt":"2026-09-20T10:00:01Z"}},
@@ -115,8 +110,7 @@ func TestBlueskyReaderStopsAtWatermark(t *testing.T) {
 }
 
 func TestBlueskyReaderContinuesPastRepostOnlyPage(t *testing.T) {
-	t.Parallel()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	server := newProviderTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		if req.URL.Query().Get("cursor") == "next" {
 			_, _ = w.Write([]byte(`{"feed":[{"post":{"uri":"at://did:plc:owner/app.bsky.feed.post/original","author":{"did":"did:plc:owner","handle":"owner.test"},"record":{"text":"original","createdAt":"2026-09-26T10:00:00Z"}}}]}`))
@@ -136,9 +130,8 @@ func TestBlueskyReaderContinuesPastRepostOnlyPage(t *testing.T) {
 }
 
 func TestBlueskyReaderMapsPermissionFailureWithoutDisconnect(t *testing.T) {
-	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := newProviderTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusForbidden)
 		_, _ = w.Write([]byte(`{"error":"AuthRequired"}`))
 	}))
@@ -153,7 +146,6 @@ func TestBlueskyReaderMapsPermissionFailureWithoutDisconnect(t *testing.T) {
 }
 
 func TestBlueskyReaderLinksThroughDIDWhenHandleIsInvalid(t *testing.T) {
-	t.Parallel()
 
 	var response blueskyAuthorFeedResponse
 	require.NoError(t, json.Unmarshal([]byte(`{"feed":[
@@ -168,10 +160,9 @@ func TestBlueskyReaderLinksThroughDIDWhenHandleIsInvalid(t *testing.T) {
 }
 
 func TestMastodonReaderImportsOriginalsWithMaxIDCursor(t *testing.T) {
-	t.Parallel()
 
 	var gotQuery string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+	server := newProviderTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 		require.Equal(t, "/api/v1/accounts/42/statuses", req.URL.Path)
 		gotQuery = req.URL.RawQuery
 		require.Equal(t, "Bearer token", req.Header.Get("Authorization"))
@@ -201,9 +192,8 @@ func TestMastodonReaderImportsOriginalsWithMaxIDCursor(t *testing.T) {
 }
 
 func TestMastodonReaderKeepsParagraphAndLineBreaks(t *testing.T) {
-	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := newProviderTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`[
 			{"id":"300","created_at":"2026-09-20T10:00:00Z","content":"<p>First line<br />second line</p><p>Tom &amp; Jerry <a href=\"https://mastodon.test/tags/cats\" class=\"mention hashtag\" rel=\"tag\">#<span>cats</span></a></p>","spoiler_text":"","url":"https://mastodon.test/@owner/300","reblog":null,"in_reply_to_id":null,"account":{"id":"42"}}
@@ -223,9 +213,8 @@ func TestMastodonReaderKeepsParagraphAndLineBreaks(t *testing.T) {
 }
 
 func TestMastodonReaderCompletesOnShortPage(t *testing.T) {
-	t.Parallel()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	server := newProviderTestServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`[
 			{"id":"300","created_at":"2026-09-20T10:00:00Z","content":"<p>only</p>","spoiler_text":"cw","url":"https://mastodon.test/@owner/300","reblog":null,"in_reply_to_id":null,"account":{"id":"42"}}

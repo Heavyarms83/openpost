@@ -83,7 +83,7 @@ func doNormCallback(t *testing.T, e *echo.Echo) *http.Response {
 	u, _ := url.Parse(body.URL)
 	state := u.Query().Get("state")
 	require.NotEmpty(t, state)
-	cb := oauthSelectionRequest(t, e, http.MethodGet, "/api/v1/accounts/"+provider+"/callback?code=code&state="+url.QueryEscape(state), nil, false)
+	cb := oauthSelectionRequest(t, e, http.MethodGet, "/api/v1/accounts/"+provider+"/callback?code=code&state="+url.QueryEscape(state), nil, true)
 	return cb.Result()
 }
 

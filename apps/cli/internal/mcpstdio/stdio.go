@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/openpost/cli/internal/transport"
 	"io"
 	"net/http"
 	"net/url"
@@ -76,8 +77,12 @@ func (p *Proxy) forward(ctx context.Context, frame []byte) ([]byte, error) {
 	if strings.TrimSpace(p.Endpoint) == "" {
 		return nil, fmt.Errorf("endpoint is required")
 	}
-	if _, err := url.ParseRequestURI(p.Endpoint); err != nil {
+	u, err := url.ParseRequestURI(p.Endpoint)
+	if err != nil {
 		return nil, fmt.Errorf("invalid endpoint: %w", err)
+	}
+	if err := transport.ValidateURL(u); err != nil {
+		return nil, err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.Endpoint, bytes.NewReader(frame))
 	if err != nil {
@@ -98,7 +103,9 @@ func (p *Proxy) forward(ctx context.Context, frame []byte) ([]byte, error) {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	resp, err := client.Do(req)
+	securedClient := *client
+	securedClient.CheckRedirect = transport.NoRedirect
+	resp, err := securedClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}

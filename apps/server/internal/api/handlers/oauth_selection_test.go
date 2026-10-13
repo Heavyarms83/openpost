@@ -154,7 +154,7 @@ func TestOAuthCallbackCreatesAndCompletesAccountSelection(t *testing.T) {
 	state := parsedAuthURL.Query().Get("state")
 	require.NotEmpty(t, state)
 
-	callbackResp := oauthSelectionRequest(t, e, http.MethodGet, "/api/v1/accounts/facebook/callback?code=provider-code&state="+url.QueryEscape(state), nil, false)
+	callbackResp := oauthSelectionRequest(t, e, http.MethodGet, "/api/v1/accounts/facebook/callback?code=provider-code&state="+url.QueryEscape(state), nil, true)
 	callbackResult := callbackResp.Result()
 	t.Cleanup(func() { _ = callbackResult.Body.Close() })
 	require.Equal(t, http.StatusTemporaryRedirect, callbackResult.StatusCode, callbackResp.Body.String())

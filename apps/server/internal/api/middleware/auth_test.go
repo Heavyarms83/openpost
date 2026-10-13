@@ -374,7 +374,7 @@ func TestExternalApplicationRESTAccessRequiresExactGrant(t *testing.T) {
 func TestCookieRequestOriginProtection(t *testing.T) {
 	require.True(t, cookieRequestAllowed(http.MethodGet, "", "app.openpost.test"))
 	require.True(t, cookieRequestAllowed(http.MethodPost, "https://app.openpost.test", "app.openpost.test"))
-	require.True(t, cookieRequestAllowed(http.MethodPost, "http://localhost:5173", "localhost:8080"))
+	require.False(t, cookieRequestAllowed(http.MethodPost, "http://localhost:5173", "localhost:8080"))
 	require.False(t, cookieRequestAllowed(http.MethodPost, "https://evil.example", "app.openpost.test"))
 	require.False(t, cookieRequestAllowed(http.MethodPost, "", "app.openpost.test"))
 }
@@ -503,4 +503,43 @@ func TestJWTAuthenticatorRejectsRevokedSession(t *testing.T) {
 	require.NoError(t, sessionService.RevokeSession(ctx, "user-1", session.ID))
 	_, err = authenticator.AuthenticateBearer(ctx, token)
 	require.Error(t, err)
+}
+
+func TestSessionBearerRejectsForeignOrigin(t *testing.T) {
+	for _, origin := range []string{"https://evil.example", "http://app.openpost.test", "https://app.openpost.test:444"} {
+		t.Run(origin, func(t *testing.T) {
+			called := false
+			e := newHumaAuthed(&fakeAuthenticator{principal: &Principal{UserID: "user", SessionID: "session"}}, &called)
+			req := httptest.NewRequest(http.MethodGet, "https://app.openpost.test/api/v1/auth-test", nil)
+			req.Header.Set("Authorization", "Bearer session-token")
+			req.Header.Set("Origin", origin)
+			rec := httptest.NewRecorder()
+			e.ServeHTTP(rec, req)
+			require.Equal(t, http.StatusForbidden, rec.Code)
+			require.False(t, called)
+		})
+	}
+}
+
+func TestTrustedProxyNetworkAssertions(t *testing.T) {
+	for _, tc := range []struct{ name, peer, forwarded, wantIP, proto, wantProto string }{
+		{"direct spoof", "203.0.113.4:5000", "1.2.3.4", "203.0.113.4", "https", ""},
+		{"trusted hop", "10.0.0.2:5000", "1.2.3.4, 203.0.113.4", "203.0.113.4", "https", "https"},
+		{"trusted chain", "10.0.0.2:5000", "203.0.113.4, 10.0.0.1", "203.0.113.4", "https", "https"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := echo.New()
+			e.Pre(TrustedProxyMiddleware([]string{"10.0.0.0/24"}))
+			e.GET("/", func(c echo.Context) error {
+				require.Equal(t, tc.wantIP, c.RealIP())
+				require.Equal(t, tc.wantProto, c.Request().Header.Get("X-Forwarded-Proto"))
+				return c.NoContent(200)
+			})
+			req := httptest.NewRequest("GET", "http://app.openpost.test/", nil)
+			req.RemoteAddr = tc.peer
+			req.Header.Set("X-Forwarded-For", tc.forwarded)
+			req.Header.Set("X-Forwarded-Proto", tc.proto)
+			e.ServeHTTP(httptest.NewRecorder(), req)
+		})
+	}
 }
