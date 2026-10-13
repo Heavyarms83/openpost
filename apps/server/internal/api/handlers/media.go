@@ -1767,12 +1767,26 @@ func (h *MediaHandler) completeDirectMediaUpload(ctx context.Context, userID, wo
 	return h.completeProjectAssetUpload(ctx, workspaceID, media, fileHash)
 }
 
-// Invalid uploads cannot be retried through completion. Remove their rows and
-// bytes using the same cancellation-independent compensation as image failures.
+// Retain the failed reservation until the lifecycle sweep, which runs after
+// every issued upload capability has expired. A late PUT then still has a
+// durable object key and remains included in stored-byte accounting.
 func (h *MediaHandler) discardInvalidDirectUpload(ctx context.Context, media *models.MediaAttachment) {
-	h.markMediaUploadFailed(ctx, media.ID)
-	if err := h.rollbackMediaRecord(ctx, media); err != nil {
-		log.Printf("failed to discard invalid direct upload %s: %v", media.ID, err)
+	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), mediaUploadCleanupTimeout)
+	defer cancel()
+	result, err := h.db.NewUpdate().Model((*models.MediaAttachment)(nil)).Set("processing_status = ?", mediaFailedStatus).
+		Where("id = ? AND workspace_id = ? AND file_hash = ? AND processing_status IN (?, ?)", media.ID, media.WorkspaceID, media.FileHash, mediaProcessingStatus, mediaUploadingStatus).Exec(cleanupCtx)
+	if err != nil {
+		log.Printf("failed to invalidate direct upload %s: %v", media.ID, err)
+		return
+	}
+	changed, err := result.RowsAffected()
+	if err != nil || changed != 1 {
+		return
+	}
+	// Immediate cleanup is best effort. The retained tombstone causes another
+	// durable deletion after the capability lifetime, including any later PUT.
+	if err := h.deleteMediaFiles(cleanupCtx, media); err != nil {
+		log.Printf("failed to remove invalid direct upload %s: %v", media.ID, err)
 	}
 }
 
@@ -2000,7 +2014,7 @@ func (h *MediaHandler) finalizeDirectMediaUploadRecord(ctx context.Context, medi
 		res, err := tx.NewUpdate().
 			Model(&media).
 			Column("mime_type", "processing_status", "processing_progress", "size", "file_hash", "width", "height", "duration_ms", "frame_rate", "thumbnails", "dominant_type", "aspect_ratio", "analysis_status", "analysis_error", "thumbnail_object_key", "public_url_ready", "public_url_checked_at", "public_url_status", "public_url_error").
-			Where("id = ? AND workspace_id = ? AND file_hash LIKE ?", media.ID, media.WorkspaceID, "pending:%").
+			Where("id = ? AND workspace_id = ? AND file_hash LIKE ? AND processing_status IN (?, ?)", media.ID, media.WorkspaceID, "pending:%", mediaProcessingStatus, mediaUploadingStatus).
 			Exec(ctx)
 		if err != nil {
 			return err
@@ -2010,7 +2024,13 @@ func (h *MediaHandler) finalizeDirectMediaUploadRecord(ctx context.Context, medi
 			return err
 		}
 		if changed == 0 {
-			return tx.NewSelect().Model(&media).Where("id = ?", media.ID).Scan(ctx)
+			if err := tx.NewSelect().Model(&media).Where("id = ? AND workspace_id = ?", media.ID, media.WorkspaceID).Scan(ctx); err != nil {
+				return err
+			}
+			if !directMediaUploadFinalized(media) {
+				return huma.Error400BadRequest("media upload session is no longer pending")
+			}
+			return nil
 		}
 		return h.serializeMediaAdmission(ctx, tx, media, media.ID, true)
 	})
@@ -2326,7 +2346,7 @@ func (h *MediaHandler) markMediaUploadFailed(ctx context.Context, mediaID string
 	_, _ = h.db.NewUpdate().
 		Model((*models.MediaAttachment)(nil)).
 		Set("processing_status = ?", mediaFailedStatus).
-		Where("id = ?", mediaID).
+		Where("id = ? AND file_hash LIKE ?", mediaID, "pending:%").
 		Exec(ctx)
 }
 
@@ -3873,6 +3893,10 @@ func (h *MediaHandler) processUploadBytes(ctx context.Context, input mediaUpload
 }
 
 func mediaAdmissionHTTPError(err error, detail string) error {
+	var statusError huma.StatusError
+	if errors.As(err, &statusError) {
+		return err
+	}
 	if errors.Is(err, usage.ErrQuotaExceeded) {
 		return huma.Error400BadRequest("media quota exceeded")
 	}

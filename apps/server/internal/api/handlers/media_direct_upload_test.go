@@ -7,6 +7,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"image"
+	"image/png"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -26,6 +28,7 @@ import (
 	"github.com/openpost/backend/internal/services/apitokens"
 	"github.com/openpost/backend/internal/services/entitlements"
 	"github.com/openpost/backend/internal/services/mediaanalysis"
+	"github.com/openpost/backend/internal/services/medialifecycle"
 	"github.com/openpost/backend/internal/services/mediastore"
 	"github.com/openpost/backend/internal/services/usage"
 	"github.com/openpost/backend/internal/services/videoprocessing"
@@ -1197,4 +1200,110 @@ func TestDirectUploadAdmissionHidesDatabaseFailures(t *testing.T) {
 			require.NotContains(t, response.Body.String(), "private media admission database detail")
 		})
 	}
+}
+
+type inspectionRaceStorage struct {
+	*fakeDirectUploadStorage
+	onRead func()
+}
+type inspectionRaceReader struct {
+	io.ReadCloser
+	callback func()
+}
+
+func (r *inspectionRaceReader) Read(p []byte) (int, error) {
+	if r.callback != nil {
+		callback := r.callback
+		r.callback = nil
+		callback()
+	}
+	return r.ReadCloser.Read(p)
+}
+func (s *inspectionRaceStorage) Open(ctx context.Context, key string) (io.ReadCloser, error) {
+	reader, err := s.fakeDirectUploadStorage.Open(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	callback := s.onRead
+	s.onRead = nil
+	return &inspectionRaceReader{ReadCloser: reader, callback: callback}, nil
+}
+func TestStaleInvalidInspectionCannotDiscardFinalizedUpload(t *testing.T) {
+	storage := &inspectionRaceStorage{fakeDirectUploadStorage: newFakeDirectUploadStorage()}
+	srv := newMediaDirectUploadTestServer(t, storage, entitlements.NewSelfHostedService())
+	var encoded bytes.Buffer
+	require.NoError(t, png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 2, 2))))
+	imageBytes := encoded.Bytes()
+	mediaID := srv.createUploadSession(t, "image.png", "image/png", int64(len(imageBytes)))
+	invalid := append([]byte(nil), imageBytes...)
+	invalid[0] = 0
+	key := mediaID + ".png"
+	storage.objects[key] = invalid
+	storage.onRead = func() {
+		storage.objects[key] = imageBytes
+		_, err := srv.handler.completeDirectMediaUpload(t.Context(), "user-1", "ws-1", mediaID)
+		require.NoError(t, err)
+	}
+	response := srv.postJSON(t, "/api/v1/media/upload-session/"+mediaID+"/complete", map[string]any{"workspace_id": "ws-1"})
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	var media models.MediaAttachment
+	require.NoError(t, srv.db.NewSelect().Model(&media).Where("id = ?", mediaID).Scan(t.Context()))
+	require.Equal(t, mediaReadyStatus, media.ProcessingStatus)
+	require.Equal(t, imageBytes, storage.objects[key])
+	require.NotContains(t, storage.deleted, key)
+}
+
+func TestInvalidSignedUploadRetainsAccountingUntilCapabilityExpiry(t *testing.T) {
+	base := newMCPTestServer(t)
+	for _, model := range []any{(*models.VideoProjectRevision)(nil), (*models.VideoProjectMutation)(nil), (*models.VideoProjectCheckpoint)(nil), (*models.VideoProjectConflict)(nil)} {
+		_, err := base.db.NewCreateTable().Model(model).IfNotExists().Exec(t.Context())
+		require.NoError(t, err)
+	}
+	storage := newFakeDirectUploadStorage()
+	handler := NewMediaHandler(base.db, storage, nil, testAuthenticator{}, nil)
+	handler.SetEntitlement(entitlements.NewStaticService(entitlements.PlanSnapshot{Limits: map[entitlements.LimitKey]int64{entitlements.LimitMediaBytesStored: 13}}))
+	e := echo.New()
+	api := humaecho.NewWithGroup(e, e.Group("/api/v1"), huma.DefaultConfig("Tombstone", "1"))
+	handler.RegisterRoutes(api)
+	srv := &mediaDirectUploadTestServer{echo: e, db: base.db, storage: storage, handler: handler, usage: usage.NewService(base.db)}
+	mediaID := srv.createUploadSession(t, "copy.png", "image/png", 12)
+	key := mediaID + ".png"
+	storage.objects[key] = []byte("<svg></svg>!")
+	response := srv.postJSON(t, "/api/v1/media/upload-session/"+mediaID+"/complete", map[string]any{"workspace_id": "ws-1"})
+	require.Equal(t, http.StatusBadRequest, response.Code, response.Body.String())
+	var failed models.MediaAttachment
+	require.NoError(t, base.db.NewSelect().Model(&failed).Where("id = ?", mediaID).Scan(t.Context()))
+	require.Equal(t, mediaFailedStatus, failed.ProcessingStatus)
+	stored, err := medialifecycle.StoredBytes(t.Context(), base.db, "ws-1", "")
+	require.NoError(t, err)
+	require.Equal(t, int64(12), stored)
+	sessionsBefore := storage.sessions
+	response = srv.postJSON(t, "/api/v1/media/upload-session", map[string]any{"workspace_id": "ws-1", "filename": "more.txt", "mime_type": "text/plain", "size": 2})
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	require.Equal(t, sessionsBefore, storage.sessions)
+	response = srv.postJSON(t, "/api/v1/media/upload-session/"+mediaID+"/complete", map[string]any{"workspace_id": "ws-1"})
+	require.Equal(t, http.StatusBadRequest, response.Code)
+	// The already issued S3 capability can PUT again despite the application failure.
+	storage.objects[key] = []byte("hello direct")
+	lifecycle := medialifecycle.NewService(base.db, nil)
+	require.NoError(t, lifecycle.Sweep(t.Context(), "ws-1", failed.CreatedAt.Add(time.Hour)))
+	exists, err := base.db.NewSelect().Model((*models.MediaAttachment)(nil)).Where("id = ?", mediaID).Exists(t.Context())
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.NoError(t, lifecycle.Sweep(t.Context(), "ws-1", failed.CreatedAt.Add(25*time.Hour)))
+	exists, err = base.db.NewSelect().Model((*models.MediaAttachment)(nil)).Where("id = ?", mediaID).Exists(t.Context())
+	require.NoError(t, err)
+	require.False(t, exists)
+	var jobs []models.Job
+	require.NoError(t, base.db.NewSelect().Model(&jobs).Where("type = ?", "storage_delete").Scan(t.Context()))
+	durableKeys := make([]string, 0, len(jobs))
+	for _, job := range jobs {
+		var payload struct {
+			Keys []string `json:"keys"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(job.Payload), &payload))
+		durableKeys = append(durableKeys, payload.Keys...)
+		require.Greater(t, job.MaxAttempts, 1)
+	}
+	require.Contains(t, durableKeys, key, "late PUT must retain a retryable object cleanup receipt")
 }
