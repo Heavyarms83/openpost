@@ -26,8 +26,8 @@ func forbiddenHeader(name string) bool {
 	return slices.Contains([]string{"host", "content-length", "connection", "transfer-encoding", "upgrade", "proxy-authorization", "proxy-connection", "te", "trailer"}, strings.ToLower(name))
 }
 func secretHeader(name string) bool {
-	name = strings.ToLower(name)
-	return strings.Contains(name, "authorization") || strings.Contains(name, "cookie") || strings.Contains(name, "token") || strings.Contains(name, "secret") || strings.Contains(name, "api-key") || strings.Contains(name, "apikey")
+	name = strings.ToLower(strings.NewReplacer("-", "", "_", "", ".", "").Replace(name))
+	return strings.Contains(name, "authorization") || strings.Contains(name, "cookie") || strings.Contains(name, "token") || strings.Contains(name, "secret") || strings.Contains(name, "apikey")
 }
 func stringMap(value any) (map[string]string, error) {
 	if value == nil || value == "" {

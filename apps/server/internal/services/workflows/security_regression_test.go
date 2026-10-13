@@ -16,6 +16,7 @@ import (
 	"github.com/openpost/backend/internal/ai"
 	"github.com/openpost/backend/internal/jobregistry"
 	"github.com/openpost/backend/internal/models"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -67,7 +68,16 @@ func TestHTTPResponseRedactsEncodedCredentials(t *testing.T) {
 	}
 }
 func TestHTTPRejectsInlineCredentialsBeforeSavingAndResolvedDispatch(t *testing.T) {
-	for _, inputs := range []map[string]any{{"url": "https://8.8.8.8/?access_token=private"}, {"url": "https://8.8.8.8/?access_token=&access_token=private"}, {"url": "https://8.8.8.8/", "query": map[string]any{"api-key": "private"}}, {"url": "https://8.8.8.8/", "body": `{"auth":{"password":"private"}}`}, {"url": "https://8.8.8.8/", "body": "access_token=private"}} {
+	for _, inputs := range []map[string]any{
+		{"url": "https://8.8.8.8/?access_token=private"},
+		{"url": "https://8.8.8.8/?access_token=&access_token=private"},
+		{"url": "https://8.8.8.8/", "query": map[string]any{"api-key": "private"}},
+		{"url": "https://8.8.8.8/", "body": `{"auth":{"password":"private"}}`},
+		{"url": "https://8.8.8.8/", "body": "access_token=private"},
+		{"url": "https://8.8.8.8/", "headers": map[string]any{"X_API_KEY": "private"}},
+		{"url": "https://8.8.8.8/", "headers": map[string]any{"X-API_Key": "private"}},
+		{"url": "https://8.8.8.8/", "headers": map[string]any{"X.API.KEY": "private"}},
+	} {
 		t.Run(inputs["url"].(string), func(t *testing.T) {
 			s, actor := workflowTestService(t, nil)
 			bindings := map[string]Value{"method": literal("POST")}
@@ -76,9 +86,9 @@ func TestHTTPRejectsInlineCredentialsBeforeSavingAndResolvedDispatch(t *testing.
 				bindings[k] = literal(v)
 			}
 			_, err := s.Save(t.Context(), actor, "ws", "", SaveRequest{Name: "Secret", Definition: Definition{Schema: 1, Source: Source{Kind: "manual"}, Steps: []Step{{ID: "http", Kind: KindHTTP, Inputs: bindings}}}})
-			require.Error(t, err)
+			assert.ErrorContains(t, err, "Connections")
 			_, err = prepareHTTPRequest(t.Context(), "key", inputs)
-			require.Error(t, err)
+			assert.ErrorContains(t, err, "Connections")
 		})
 	}
 }
