@@ -34,6 +34,7 @@ func newNormServer(t *testing.T, providers map[string]platform.Adapter) (*echo.E
 		(*models.WorkspaceFirstConnection)(nil),
 		(*models.OAuthAccountSelectionReservation)(nil),
 	)
+	seedOAuthWorkspaceBoundary(t, db, "ws-1")
 	_, err := db.NewInsert().Model(&models.WorkspaceMember{WorkspaceID: "ws-1", UserID: "user-1", Role: models.WorkspaceRoleAdmin}).Exec(ctx)
 	require.NoError(t, err)
 	if providers == nil {

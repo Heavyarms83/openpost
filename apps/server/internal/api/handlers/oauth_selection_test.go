@@ -117,6 +117,7 @@ func TestOAuthCallbackCreatesAndCompletesAccountSelection(t *testing.T) {
 		(*models.SocialAccount)(nil),
 		(*models.Job)(nil),
 	)
+	seedOAuthWorkspaceBoundary(t, db, "ws-1")
 	_, err := db.NewInsert().Model(&models.WorkspaceMember{
 		WorkspaceID: "ws-1",
 		UserID:      "user-1",
@@ -261,6 +262,7 @@ func TestGetAuthURLRejectsMissingSocialAccountEntitlement(t *testing.T) {
 		(*models.OAuthAccountSelection)(nil),
 		(*models.SocialAccount)(nil),
 	)
+	seedOAuthWorkspaceBoundary(t, db, "ws-1")
 	_, err := db.NewInsert().Model(&models.WorkspaceMember{
 		WorkspaceID: "ws-1",
 		UserID:      "user-1",

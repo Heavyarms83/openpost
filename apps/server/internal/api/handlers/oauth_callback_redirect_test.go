@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humaecho"
@@ -227,6 +228,7 @@ func newOAuthCallbackRedirectTestServer(t *testing.T, providerName string, adapt
 		(*models.SocialAccount)(nil),
 		(*models.Job)(nil),
 	)
+	seedOAuthWorkspaceBoundary(t, db, "ws-1")
 	_, err := db.NewInsert().Model(&models.WorkspaceMember{
 		WorkspaceID: "ws-1",
 		UserID:      "user-1",
@@ -278,4 +280,18 @@ func TestOAuthCallbackCannotConnectWithoutInitiatingActor(t *testing.T) {
 	count, err := db.NewSelect().Model((*models.SocialAccount)(nil)).Count(t.Context())
 	require.NoError(t, err)
 	require.Zero(t, count)
+}
+
+func seedOAuthWorkspaceBoundary(t *testing.T, db *bun.DB, workspaceID string) {
+	t.Helper()
+	for _, model := range []any{(*models.Organization)(nil), (*models.Workspace)(nil)} {
+		_, err := db.NewCreateTable().Model(model).IfNotExists().Exec(t.Context())
+		require.NoError(t, err)
+	}
+	now := time.Now().UTC()
+	organizationID := "oauth-org-" + workspaceID
+	_, err := db.NewInsert().Model(&models.Organization{ID: organizationID, Name: "OAuth", CreatedByID: "user-1", CreatedAt: now, UpdatedAt: now}).On("CONFLICT DO NOTHING").Exec(t.Context())
+	require.NoError(t, err)
+	_, err = db.NewInsert().Model(&models.Workspace{ID: workspaceID, OrganizationID: organizationID, Name: "OAuth", CreatedAt: now}).On("CONFLICT DO NOTHING").Exec(t.Context())
+	require.NoError(t, err)
 }
