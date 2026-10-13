@@ -3,6 +3,10 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"net/http"
+	"testing"
+	"time"
+
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humaecho"
 	"github.com/labstack/echo/v4"
@@ -11,9 +15,6 @@ import (
 	"github.com/openpost/backend/internal/services/auth"
 	"github.com/openpost/backend/internal/services/mfa"
 	"github.com/stretchr/testify/require"
-	"net/http"
-	"testing"
-	"time"
 )
 
 func TestPasskeyLoginAttemptLimit(t *testing.T) {
@@ -84,4 +85,17 @@ func TestPasskeyBeginRetryKeepsSameCeremony(t *testing.T) {
 	count, err := db.NewSelect().Model((*models.AuthChallenge)(nil)).Where("type = ?", authChallengePasskeyLogin).Count(t.Context())
 	require.NoError(t, err)
 	require.Equal(t, 1, count)
+}
+
+func TestAuthLoginRateLimitsAreDeclared(t *testing.T) {
+	e := echo.New()
+	api := humaecho.NewWithGroup(e, e.Group("/api/v1"), huma.DefaultConfig("test", "1"))
+	h := NewAuthHandler(nil, nil, nil, nil, nil, false)
+	h.Login(api)
+	h.VerifyTOTPLogin(api)
+	for _, path := range []string{"/auth/login", "/auth/login/totp"} {
+		operation := api.OpenAPI().Paths[path].Post
+		require.Contains(t, operation.Responses, "429", path)
+		require.NotEmpty(t, operation.Responses["429"].Content["application/problem+json"].Schema.Ref)
+	}
 }

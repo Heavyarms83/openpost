@@ -637,7 +637,7 @@ func (h *AuthHandler) Login(api huma.API) {
 		Summary:     "Login with email and password",
 		Tags:        []string{tagAuth},
 		Middlewares: huma.Middlewares{middleware.RequestMetadataMiddleware()},
-		Errors:      []int{401},
+		Errors:      []int{401, 429},
 	}, func(ctx context.Context, input *LoginInput) (*AuthOutput, error) {
 		normalizedEmail := strings.TrimSpace(strings.ToLower(input.Body.Email))
 		if !h.allowAuthAttempt(clientIP(ctx), "login:ip", 20, 15*time.Minute) {
@@ -730,7 +730,7 @@ func (h *AuthHandler) VerifyTOTPLogin(api huma.API) {
 		Summary:     "Complete MFA login with a TOTP code",
 		Tags:        []string{tagAuth},
 		Middlewares: huma.Middlewares{middleware.RequestMetadataMiddleware()},
-		Errors:      []int{400, 401},
+		Errors:      []int{400, 401, 429},
 	}, func(ctx context.Context, input *VerifyTOTPLoginInput) (*AuthOutput, error) {
 		challenge, err := h.getChallenge(ctx, input.Body.MFAToken, authChallengeLoginMFA)
 		if err != nil {

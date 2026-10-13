@@ -21,6 +21,8 @@ HTTPS and a stable public URL matter for social network sign-in, passkeys, MCP s
 
 Set `OPENPOST_TRUSTED_PROXY_CIDRS` to the IP networks of the immediate proxy connections that reach OpenPost. The default is empty: forwarded client IP and scheme headers are ignored. Configure this before upgrading a deployment that terminates HTTPS at a proxy, otherwise browser sign-in and writes can fail their Origin check.
 
+IPv4-mapped IPv6 CIDRs such as `::ffff:10.0.0.0/120` are normalized to their IPv4 equivalent, `10.0.0.0/24`. Mapped prefixes shorter than 96 bits are rejected because they include addresses outside the IPv4-mapped range.
+
 For Caddy or Nginx running on the same host and connecting over loopback:
 
 ```dotenv

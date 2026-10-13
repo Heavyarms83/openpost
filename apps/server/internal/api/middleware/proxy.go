@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/labstack/echo/v4"
+	"github.com/openpost/backend/internal/netguard"
 )
 
 // TrustedProxyMiddleware removes network assertions from direct clients and
@@ -13,7 +14,7 @@ import (
 func TrustedProxyMiddleware(cidrs []string) echo.MiddlewareFunc {
 	prefixes := make([]netip.Prefix, 0, len(cidrs))
 	for _, cidr := range cidrs {
-		if prefix, err := netip.ParsePrefix(cidr); err == nil {
+		if prefix, err := netguard.ParseTrustedProxyPrefix(cidr); err == nil {
 			prefixes = append(prefixes, prefix)
 		}
 	}

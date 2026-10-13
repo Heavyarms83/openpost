@@ -24,6 +24,8 @@ Use the [Caddy and Nginx examples](https://github.com/getopenpost/openpost/blob/
 
 Set `OPENPOST_TRUSTED_PROXY_CIDRS` to the networks used by the proxy's connection to OpenPost. With Caddy or Nginx on the same host, use `127.0.0.1/32,::1/128`. For containers or tunnels, use their actual upstream addresses or dedicated subnet. The default ignores forwarded IP and scheme headers, so configure this before upgrading an existing HTTPS proxy deployment. Keep the backend private and have the proxy overwrite client-supplied forwarded headers.
 
+IPv4-mapped IPv6 CIDRs such as `::ffff:10.0.0.0/120` are normalized to their IPv4 equivalent, `10.0.0.0/24`. Mapped prefixes shorter than 96 bits are rejected because they include addresses outside the IPv4-mapped range.
+
 Recreate the backend after changing its environment, then sign in through the HTTPS URL and save a draft. The session cookie should have `Secure`.
 
 Before connecting an account, confirm that `https://your-domain.example/api/v1/ready` returns `"status":"ready"`. Test an uploaded media URL from outside your network too.

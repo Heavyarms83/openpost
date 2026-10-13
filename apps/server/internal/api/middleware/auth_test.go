@@ -510,7 +510,7 @@ func TestSessionBearerRejectsForeignOrigin(t *testing.T) {
 		t.Run(origin, func(t *testing.T) {
 			called := false
 			e := newHumaAuthed(&fakeAuthenticator{principal: &Principal{UserID: "user", SessionID: "session"}}, &called)
-			req := httptest.NewRequest(http.MethodGet, "https://app.openpost.test/api/v1/auth-test", nil)
+			req := httptest.NewRequestWithContext(t.Context(), http.MethodGet, "https://app.openpost.test/api/v1/auth-test", nil)
 			req.Header.Set("Authorization", "Bearer session-token")
 			req.Header.Set("Origin", origin)
 			rec := httptest.NewRecorder()
@@ -522,20 +522,22 @@ func TestSessionBearerRejectsForeignOrigin(t *testing.T) {
 }
 
 func TestTrustedProxyNetworkAssertions(t *testing.T) {
-	for _, tc := range []struct{ name, peer, forwarded, wantIP, proto, wantProto string }{
-		{"direct spoof", "203.0.113.4:5000", "1.2.3.4", "203.0.113.4", "https", ""},
-		{"trusted hop", "10.0.0.2:5000", "1.2.3.4, 203.0.113.4", "203.0.113.4", "https", "https"},
-		{"trusted chain", "10.0.0.2:5000", "203.0.113.4, 10.0.0.1", "203.0.113.4", "https", "https"},
+	for _, tc := range []struct{ name, peer, forwarded, wantIP, proto, wantProto, prefix string }{
+		{"direct spoof", "203.0.113.4:5000", "1.2.3.4", "203.0.113.4", "https", "", "10.0.0.0/24"},
+		{"trusted hop", "10.0.0.2:5000", "1.2.3.4, 203.0.113.4", "203.0.113.4", "https", "https", "10.0.0.0/24"},
+		{"trusted chain", "10.0.0.2:5000", "203.0.113.4, 10.0.0.1", "203.0.113.4", "https", "https", "10.0.0.0/24"},
+		{"mapped CIDR", "10.0.0.2:5000", "203.0.113.4", "203.0.113.4", "https", "https", "::ffff:10.0.0.0/120"},
+		{"mapped peer", "[::ffff:10.0.0.2]:5000", "203.0.113.4", "203.0.113.4", "https", "https", "::ffff:10.0.0.0/120"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			e := echo.New()
-			e.Pre(TrustedProxyMiddleware([]string{"10.0.0.0/24"}))
+			e.Pre(TrustedProxyMiddleware([]string{tc.prefix}))
 			e.GET("/", func(c echo.Context) error {
 				require.Equal(t, tc.wantIP, c.RealIP())
 				require.Equal(t, tc.wantProto, c.Request().Header.Get("X-Forwarded-Proto"))
 				return c.NoContent(200)
 			})
-			req := httptest.NewRequest("GET", "http://app.openpost.test/", nil)
+			req := httptest.NewRequestWithContext(t.Context(), "GET", "http://app.openpost.test/", nil)
 			req.RemoteAddr = tc.peer
 			req.Header.Set("X-Forwarded-For", tc.forwarded)
 			req.Header.Set("X-Forwarded-Proto", tc.proto)
