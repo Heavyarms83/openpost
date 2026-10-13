@@ -93,7 +93,7 @@ export async function createRepurposeProjects(input: {
 		}
 		file = await handle.getFile();
 	}
-	const contentFingerprint = await createHash(file);
+	const contentFingerprint = await createHash(file, signal);
 	const sha256 = contentFingerprint.slice('sha256:'.length);
 	guard();
 	const repository =

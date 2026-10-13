@@ -141,6 +141,47 @@ test('cancelling after a local write leaves no unreported project', async () => 
 	expect((await listProjectsFromWorkspace()).projects).toEqual([]);
 });
 
+test('cancelling source hashing stops reads before another chunk or project write', async () => {
+	const request = new AbortController();
+	const input = source();
+	input.handle = await root.getFileHandle('large.mp4', { create: true });
+	const writer = await input.handle.createWritable();
+	await writer.write(new Uint8Array(1024 * 1024));
+	await writer.close();
+	input.file = undefined;
+	let reads = 0;
+	const originalRead = Blob.prototype.arrayBuffer;
+	const reading = vi
+		.spyOn(Blob.prototype, 'arrayBuffer')
+		.mockImplementation(async function (this: Blob) {
+			const bytes = await originalRead.call(this);
+			reads++;
+			request.abort();
+			return bytes;
+		});
+	const onCreated = vi.fn();
+	try {
+		await expect(
+			createRepurposeProjects({
+				source: input,
+				choices: [{ id: 'one', title: 'Cancelled clip', start: 2, end: 5 }],
+				storage: 'local',
+				workspaceId: '',
+				signal: request.signal,
+				isCurrent: () => true,
+				onProgress: () => {},
+				onWarning: () => {},
+				onCreated
+			})
+		).rejects.toMatchObject({ name: 'AbortError' });
+		expect(reads).toBe(1);
+		expect(onCreated).not.toHaveBeenCalled();
+		expect((await listProjectsFromWorkspace()).projects).toEqual([]);
+	} finally {
+		reading.mockRestore();
+	}
+});
+
 test('a full browser cache does not discard a completed cloud clip', async () => {
 	const release = registerQueryAuthorizationBoundary({
 		captureIdentity: () => ({ userID: 'actor', epoch: 1 }),
