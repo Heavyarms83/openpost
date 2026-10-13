@@ -92,7 +92,7 @@ func providerRedirectPolicy(policy netguard.URLPolicy) func(*http.Request, []*ht
 		}
 		if len(via) > 0 {
 			original := via[0]
-			credentialed := original.Header.Get("Authorization") != "" || original.Header.Get("Cookie") != "" || original.URL.Query().Get("access_token") != "" || original.URL.User != nil || original.Body != nil
+			credentialed := len(original.Header) > 0 || original.URL.Query().Get("access_token") != "" || original.URL.User != nil || original.Body != nil
 			if credentialed && (req.URL.Scheme != original.URL.Scheme || req.URL.Host != original.URL.Host) {
 				return fmt.Errorf("credential-bearing provider redirect changed origin")
 			}

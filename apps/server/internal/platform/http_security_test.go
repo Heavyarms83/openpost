@@ -44,21 +44,28 @@ func newProviderTestServer(t *testing.T, handler http.Handler) *httptest.Server 
 }
 
 func TestProviderRedirectDoesNotForwardCredentialsToAnotherOrigin(t *testing.T) {
-	client := newDefaultHTTPClient()
-	requests := 0
-	client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
-		requests++
-		return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": {"https://1.1.1.1/steal"}}, Body: io.NopCloser(strings.NewReader("")), Request: req}, nil
-	})
-	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://8.8.8.8/api", nil)
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer secret")
-	resp, err := client.Do(req)
-	if resp != nil {
-		_ = resp.Body.Close()
+	for _, header := range []string{"Authorization", "X-API-Key", "X-Custom-Secret"} {
+		t.Run(header, func(t *testing.T) {
+			client := newDefaultHTTPClient()
+			requests := 0
+			client.Transport = roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				requests++
+				if requests > 1 {
+					return jsonResponse(req, `{}`), nil
+				}
+				return &http.Response{StatusCode: http.StatusFound, Header: http.Header{"Location": {"https://1.1.1.1/steal"}}, Body: io.NopCloser(strings.NewReader("")), Request: req}, nil
+			})
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, "https://8.8.8.8/api", nil)
+			require.NoError(t, err)
+			req.Header.Set(header, "synthetic-secret")
+			resp, err := client.Do(req)
+			if resp != nil {
+				_ = resp.Body.Close()
+			}
+			require.ErrorContains(t, err, "redirect changed origin")
+			require.Equal(t, 1, requests)
+		})
 	}
-	require.ErrorContains(t, err, "redirect changed origin")
-	require.Equal(t, 1, requests)
 }
 
 func TestProviderRedirectDoesNotReplayLoginBodyToAnotherOrigin(t *testing.T) {
