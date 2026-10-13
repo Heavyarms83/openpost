@@ -151,7 +151,7 @@ type resumableStorageFixture struct {
 	chunkSize int64
 }
 
-func (f *resumableStorageFixture) UploadMediaResumable(ctx context.Context, _ string, _ string, req platform.UploadMediaRequest, state platform.ResumableMediaUploadState, checkpoint platform.MediaUploadCheckpoint) (string, error) {
+func (f *resumableStorageFixture) UploadMediaResumable(_ context.Context, _ string, _ string, req platform.UploadMediaRequest, state platform.ResumableMediaUploadState, checkpoint platform.MediaUploadCheckpoint) (string, error) {
 	for offset := state.UploadedBytes; offset < req.Size; {
 		reader, err := req.OpenReaderAt(offset)
 		if err != nil {

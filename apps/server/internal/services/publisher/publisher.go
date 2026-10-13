@@ -1913,15 +1913,9 @@ func (s *Service) publishProviderWithUsage(
 		if readinessErr := s.requireProviderWriteReadiness(sendCtx, workspaceID, providerName, writeScope, req); readinessErr != nil {
 			return platform.PublishResult{}, readinessErr
 		}
-		reservation, reserveErr := s.reserveProviderPublishCost(sendCtx, workspaceID, providerName, subject, phase, req)
+		reservation, reserveErr := s.reserveProviderDispatch(sendCtx, workspaceID, providerName, subject, phase, writeScope, req)
 		if reserveErr != nil {
 			return platform.PublishResult{}, reserveErr
-		}
-		if quotaErr := s.admitProviderUsage(sendCtx, workspaceID, writeScope); quotaErr != nil {
-			if releaseErr := s.releaseUnsentProviderCost(sendCtx, reservation); releaseErr != nil {
-				return platform.PublishResult{}, errors.Join(quotaErr, releaseErr)
-			}
-			return platform.PublishResult{}, quotaErr
 		}
 		requestCopy := *req
 		control.BindPublishRequest(&requestCopy)
@@ -1946,15 +1940,9 @@ func (s *Service) publishProviderWithUsage(
 			if readinessErr := s.requireProviderWriteReadiness(resumeCtx, workspaceID, providerName, writeScope, req); readinessErr != nil {
 				return platform.PublishResult{}, readinessErr
 			}
-			reservation, reserveErr := s.reserveProviderPublishCost(resumeCtx, workspaceID, providerName, subject, phase+"-resume", req)
+			reservation, reserveErr := s.reserveProviderDispatch(resumeCtx, workspaceID, providerName, subject, phase+"-resume", writeScope, req)
 			if reserveErr != nil {
 				return platform.PublishResult{}, reserveErr
-			}
-			if quotaErr := s.admitProviderUsage(resumeCtx, workspaceID, writeScope); quotaErr != nil {
-				if releaseErr := s.releaseUnsentProviderCost(resumeCtx, reservation); releaseErr != nil {
-					return platform.PublishResult{}, errors.Join(quotaErr, releaseErr)
-				}
-				return platform.PublishResult{}, quotaErr
 			}
 			requestCopy := *req
 			control.BindPublishRequest(&requestCopy)
@@ -1967,7 +1955,7 @@ func (s *Service) publishProviderWithUsage(
 	settleCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 	if settleErr := s.settleProviderUsage(settleCtx, workspaceID, writeScope); settleErr != nil {
-		return result, errors.Join(err, settleErr)
+		log.Printf("[Publisher] monthly usage settlement failed; reservation retained: %v", settleErr)
 	}
 	return result, err
 }

@@ -40,17 +40,10 @@ func (s *Service) admitProviderUsage(ctx context.Context, workspaceID string, sc
 			return err
 		}
 		now := time.Now().UTC()
-		if scope.operation == "publish" {
-			decision, err := s.providerUsagePolicy(ctx, tx, workspaceID, entitlements.LimitPublishedPostsMonthly)
-			if err != nil {
-				return err
-			}
-			if !decision.Unlimited {
-				if err := usage.ReserveMonthlyInTransaction(ctx, tx, scope.operationID, workspaceID, entitlements.LimitPublishedPostsMonthly, now, decision); err != nil {
-					return fmt.Errorf("published post quota: %w", err)
-				}
-			}
+		if err := s.reservePublishedQuota(ctx, tx, workspaceID, scope, now); err != nil {
+			return err
 		}
+
 		decision, err := s.providerUsagePolicy(ctx, tx, workspaceID, entitlements.LimitProviderWriteCallsMonthly)
 		if err != nil {
 			return err
@@ -59,6 +52,23 @@ func (s *Service) admitProviderUsage(ctx context.Context, workspaceID string, sc
 		return err
 	})
 }
+func (s *Service) reservePublishedQuota(ctx context.Context, db bun.IDB, workspaceID string, scope providerWriteScope, now time.Time) error {
+	if scope.operation != "publish" {
+		return nil
+	}
+	decision, err := s.providerUsagePolicy(ctx, db, workspaceID, entitlements.LimitPublishedPostsMonthly)
+	if err != nil {
+		return err
+	}
+	if decision.Unlimited {
+		return nil
+	}
+	if err := usage.ReserveMonthlyInTransaction(ctx, db, scope.operationID, workspaceID, entitlements.LimitPublishedPostsMonthly, now, decision); err != nil {
+		return fmt.Errorf("published post quota: %w", err)
+	}
+	return nil
+}
+
 func (s *Service) settleProviderUsage(ctx context.Context, workspaceID string, scope providerWriteScope) error {
 	if s.quota == nil || s.usage == nil || scope.operation != "publish" {
 		return nil
